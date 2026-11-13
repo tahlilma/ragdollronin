@@ -1,0 +1,13 @@
+{
+  "name": "ragdoll-ronin",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Physics samurai side-scroller with online duels",
+  "scripts": {
+    "start": "node start.js",
+    "serve": "npx --yes serve -l 3000",
+    "relay": "node server.js",
+    "relay:dev": "cd relay && npx --yes wrangler@4 dev --port 8787",
+    "deploy:relay": "node deploy-relay.js"
+  }
+}

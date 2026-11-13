@@ -1,0 +1,121 @@
+:root {
+  --ink: #f4ecd8;
+  --dim: rgba(244, 236, 216, 0.65);
+  --red: #e5323d;
+  --teal: #46b8b0;
+  --panel: rgba(6, 22, 27, 0.82);
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; height: 100%; overflow: hidden;
+  background: #06242b; color: var(--ink);
+  font-family: "Zen Kaku Gothic New", system-ui, sans-serif;
+  user-select: none; -webkit-user-select: none;
+}
+canvas { display: block; position: fixed; inset: 0; }
+body.in-game canvas { cursor: none; }
+
+#ui { position: fixed; inset: 0; pointer-events: none; }
+.screen {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  pointer-events: auto; padding: 16px;
+  background: radial-gradient(ellipse at center, rgba(4, 18, 22, 0.55), rgba(2, 8, 10, 0.88));
+  animation: fade 0.35s ease-out;
+}
+.hidden { display: none; }
+#title { background: radial-gradient(ellipse at center, rgba(4, 18, 22, 0.2), rgba(2, 8, 10, 0.7)); }
+#title .panel { background: rgba(6, 22, 27, 0.78); }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
+.panel {
+  background: var(--panel); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 14px;
+  padding: 28px 34px; text-align: center; max-width: 760px; width: 100%;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  max-height: 100%; overflow-y: auto;
+}
+.title-panel { max-width: 820px; }
+.kanji-big { font-family: "Shippori Mincho B1", serif; font-weight: 800; font-size: 84px; line-height: 1; color: var(--red); text-shadow: 0 0 30px rgba(229, 50, 61, 0.45); }
+.kanji-mid { font-family: "Shippori Mincho B1", serif; font-weight: 800; font-size: 64px; line-height: 1; color: var(--red); }
+h1 { font-family: "Shippori Mincho B1", serif; font-weight: 800; letter-spacing: 0.18em; font-size: 40px; margin: 10px 0 2px; }
+h2 { font-family: "Shippori Mincho B1", serif; font-weight: 800; letter-spacing: 0.14em; font-size: 30px; margin: 8px 0 14px; }
+.tag { margin: 0 0 20px; color: var(--dim); font-style: italic; }
+
+.stages { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 18px; }
+.stage {
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 12px 6px;
+  border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.18); background: rgba(255, 255, 255, 0.05);
+  color: var(--ink); cursor: pointer; font: inherit; transition: transform 0.12s, background 0.12s, border-color 0.12s;
+}
+.stage:hover:not(:disabled) { transform: translateY(-2px); background: rgba(229, 50, 61, 0.18); border-color: var(--red); }
+.stage .num { font-family: "Shippori Mincho B1", serif; font-size: 26px; font-weight: 800; }
+.stage .nm { font-size: 13px; font-weight: 700; }
+.stage .kj { font-size: 12px; color: var(--dim); }
+.stage .dc { font-size: 11px; color: #ff9a9a; min-height: 14px; }
+.stage.locked { opacity: 0.35; cursor: not-allowed; }
+.stage.cleared { border-color: rgba(255, 215, 106, 0.6); }
+.stage.cleared .num { color: #ffd76a; }
+
+.controls { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 18px; text-align: left; font-size: 14px; color: var(--dim); margin: 0 auto 14px; max-width: 600px; }
+kbd {
+  display: inline-block; min-width: 22px; padding: 1px 6px; margin-right: 4px; border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.25); border-bottom-width: 2px;
+  font: 700 12px system-ui, sans-serif; color: var(--ink); text-align: center;
+}
+.warn { font-size: 13px; color: #ffb0b0; margin: 8px 0 14px; line-height: 1.5; }
+
+button {
+  display: block; margin: 10px auto 0; min-width: 220px; padding: 11px 22px; border-radius: 999px;
+  border: 1px solid var(--red); background: var(--red); color: #fff; font: 700 15px "Zen Kaku Gothic New", system-ui, sans-serif;
+  cursor: pointer; letter-spacing: 0.06em; transition: transform 0.1s, filter 0.1s;
+}
+button:hover { transform: translateY(-1px); filter: brightness(1.12); }
+button.ghost { background: transparent; border-color: rgba(255, 255, 255, 0.3); color: var(--dim); }
+.stages button { display: flex; margin: 0; min-width: 0; letter-spacing: 0; }
+
+.death { flex-direction: column; text-align: center; cursor: pointer; background: radial-gradient(ellipse at center, rgba(60, 0, 6, 0.55), rgba(8, 0, 2, 0.92)); }
+.kanji-death { font-family: "Shippori Mincho B1", serif; font-weight: 800; font-size: 150px; line-height: 1; color: var(--red); text-shadow: 0 0 50px rgba(229, 50, 61, 0.6); animation: slam 0.5s cubic-bezier(.2, 1.6, .4, 1); }
+@keyframes slam { from { transform: scale(2.2); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.death h2 { letter-spacing: 0.4em; }
+.cause { color: var(--dim); margin: 0; }
+.taunt { font-size: 18px; font-style: italic; margin: 10px 0; }
+.count { color: #ff9a9a; font-size: 14px; margin: 0; }
+.hint { color: var(--dim); font-size: 13px; margin-top: 22px; }
+
+.title-row { display: grid; grid-template-columns: 1.6fr 1fr; gap: 12px; margin: 4px 0 6px; text-align: left; }
+.card { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 12px; padding: 12px 14px; }
+.card h3 { margin: 0 0 8px; font-family: "Shippori Mincho B1", serif; font-weight: 800; letter-spacing: 0.12em; font-size: 16px; }
+.card h3 small { font-family: "Zen Kaku Gothic New", system-ui, sans-serif; font-weight: 700; letter-spacing: 0; font-size: 11px; color: var(--dim); margin-left: 6px; }
+.card.side { display: flex; flex-direction: column; gap: 8px; justify-content: center; }
+.card.side button { margin: 0; width: 100%; min-width: 0; }
+.pvp-row { display: flex; gap: 8px; }
+.pvp-row input {
+  flex: 1; min-width: 0; padding: 9px 12px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.35); color: var(--ink); font: 700 14px "Zen Kaku Gothic New", system-ui, sans-serif; outline: none;
+}
+.pvp-row input:focus { border-color: var(--teal); }
+.pvp-row input.room { flex: 0.7; }
+.pvp-row button { margin: 0; min-width: 0; }
+.pvp-hint { margin: 8px 0 0; font-size: 12px; color: var(--teal); user-select: text; -webkit-user-select: text; }
+.pvp-msg { margin: 4px 0 0; font-size: 12px; color: #ffb0b0; min-height: 0; }
+button.small { padding: 8px 16px; font-size: 13px; min-width: 0; }
+button:disabled { opacity: 0.5; cursor: wait; }
+
+.tips { text-align: left; color: var(--dim); font-size: 14px; line-height: 1.55; max-width: 600px; margin: 6px auto 8px; padding-left: 20px; }
+.tips b { color: var(--ink); }
+
+.tracks { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; text-align: left; }
+.track { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: rgba(255, 255, 255, 0.04); border: 1px solid transparent; }
+.track.playing { border-color: rgba(229, 50, 61, 0.6); background: rgba(229, 50, 61, 0.1); }
+.track .tinfo { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.track .tname { font-weight: 700; font-size: 14px; }
+.track .tmeta { font-size: 11px; color: var(--dim); }
+.track button { margin: 0; flex: none; }
+
+@media (max-width: 720px) {
+  .title-row { grid-template-columns: 1fr; }
+  .stages { grid-template-columns: repeat(2, 1fr); }
+  .controls { grid-template-columns: 1fr; }
+  h1 { font-size: 28px; }
+  .kanji-big { font-size: 60px; }
+  .panel { padding: 20px 16px; }
+}

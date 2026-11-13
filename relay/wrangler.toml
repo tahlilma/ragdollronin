@@ -1,0 +1,12 @@
+name = "ragdoll-ronin-relay"
+main = "worker.mjs"
+compatibility_date = "2025-01-01"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "DuelRoomDO"
+
+# SQLite-backed Durable Objects are available on Cloudflare's free plan
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["DuelRoomDO"]

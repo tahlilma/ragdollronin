@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ragdoll Ronin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@500;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="ui">
+  <section id="title" class="screen">
+    <div class="panel title-panel">
+      <div class="kanji-big">浪人</div>
+      <h1>RAGDOLL RONIN</h1>
+      <p class="tag">a wobbly samurai tragedy in five acts</p>
+      <div id="stages" class="stages"></div>
+      <div class="title-row">
+        <div class="card pvp">
+          <h3>ONLINE DUEL <small>PvP · up to 8 samurai per room</small></h3>
+          <div class="pvp-row">
+            <input id="pvpName" maxlength="16" placeholder="Your name" autocomplete="off" spellcheck="false">
+            <input id="pvpRoom" class="room" maxlength="24" placeholder="Room (optional)" autocomplete="off" spellcheck="false">
+            <button class="small" data-act="pvp">Join duel</button>
+          </div>
+          <p id="pvpHint" class="pvp-hint"></p>
+          <p id="pvpMsg" class="pvp-msg"></p>
+        </div>
+        <div class="card side">
+          <button class="small ghost" data-act="help">How to play</button>
+          <button class="small ghost" data-act="musicRoom">♪ Koto music room</button>
+          <button class="small ghost" data-act="mute" id="muteBtn">Sound: on (M)</button>
+        </div>
+      </div>
+      <p class="warn">Fast swings cut. Slow swings bonk. Dying anywhere restarts the whole stage.</p>
+    </div>
+  </section>
+
+  <section id="help" class="screen hidden">
+    <div class="panel">
+      <h2>HOW TO PLAY</h2>
+      <div class="controls">
+        <div><kbd>Mouse</kbd> swing your blade</div>
+        <div><kbd>A</kbd><kbd>D</kbd> move</div>
+        <div><kbd>Space</kbd> jump / double jump</div>
+        <div><kbd>Shift</kbd> dash (invincible)</div>
+        <div><kbd>Right-click</kbd> plant the blade tip in stone</div>
+        <div>…then move the <kbd>Mouse</kbd> to pivot around it</div>
+        <div><kbd>W</kbd><kbd>S</kbd> shorten / lengthen grip</div>
+        <div><kbd>Space</kbd> while planted: vault</div>
+        <div><kbd>S</kbd> drop through ledges</div>
+        <div><kbd>Esc</kbd> pause · <kbd>R</kbd> restart · <kbd>M</kbd> mute</div>
+        <div><kbd>T</kbd> taunt (online duel)</div>
+      </div>
+      <ul class="tips">
+        <li>Your blade sweeps right through stone, so full 360° swings are fine. Hold right-click as the tip meets rock to bite it in and pivot.</li>
+        <li>Swing <b>into</b> an enemy's blade while it attacks to <b>parry</b> and stagger them. Holding still only blocks.</li>
+        <li>Swat arrows, feathers and foxfire with a fast swing to send them back. Boulders need a <i>very</i> fast one.</li>
+        <li>Ki drains if you flail nonstop. Run dry and you're winded.</li>
+        <li>In online duels, the faster blade wins a clash and staggers the other samurai. Use a room code to duel privately with friends.</li>
+      </ul>
+      <button class="ghost" data-act="back">Back</button>
+    </div>
+  </section>
+
+  <section id="music" class="screen hidden">
+    <div class="panel">
+      <h2>KOTO MUSIC ROOM</h2>
+      <p class="tag">Every track is composed and played live by plucked-string physics. Save any of them as a .wav.</p>
+      <div id="trackList" class="tracks"></div>
+      <button class="ghost" data-act="back">Back</button>
+    </div>
+  </section>
+
+  <section id="pause" class="screen hidden">
+    <div class="panel">
+      <h2 id="pauseTitle">PAUSED</h2>
+      <button data-act="resume">Resume</button>
+      <button data-act="restart" id="btnRestart">Restart stage</button>
+      <button data-act="quit" id="btnQuit">Quit to title</button>
+    </div>
+  </section>
+
+  <section id="dead" class="screen hidden death" data-act="retry">
+    <div class="kanji-death">死</div>
+    <h2>DEFEATED</h2>
+    <p id="deathCause" class="cause"></p>
+    <p id="taunt" class="taunt"></p>
+    <p id="deathCount" class="count"></p>
+    <p class="hint">Click or press R to restart the stage</p>
+  </section>
+
+  <section id="clear" class="screen hidden">
+    <div class="panel">
+      <div class="kanji-mid">勝</div>
+      <h2>STAGE CLEARED</h2>
+      <p id="clearStats"></p>
+      <button data-act="next">Continue</button>
+      <button class="ghost" data-act="quit">Title</button>
+    </div>
+  </section>
+
+  <section id="win" class="screen hidden">
+    <div class="panel">
+      <div class="kanji-mid">完</div>
+      <h2>THE SHOGUN HAS FALLEN</h2>
+      <p id="winStats"></p>
+      <button data-act="quit">Return to title</button>
+    </div>
+  </section>
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/util.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/music.js"></script>
+<script src="js/world.js"></script>
+<script src="js/figure.js"></script>
+<script src="js/fx.js"></script>
+<script src="js/projectiles.js"></script>
+<script src="js/player.js"></script>
+<script src="js/enemies.js"></script>
+<script src="js/bosses.js"></script>
+<script src="js/levels.js"></script>
+<script src="js/net.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>
