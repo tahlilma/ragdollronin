@@ -24,6 +24,7 @@ class Remote {
   constructor(id) {
     this.id = id; this.snaps = []; this.pose = newPose(); this.ready = false;
     this.x = 0; this.y = 0; this.f = 1; this.hp = 5; this.fl = 0; this.ang = 0; this.av = 0;
+    this.ic = 0; this.cm = 0; this.cutT = 0; this.headAng = 0; this.headSpin = 0;
     this.hx = 0; this.hy = 0; this.bx = 0; this.by = 0; this.tx = 0; this.ty = 0;
     this.band1 = new Rope(7, 4.5, 0, 0); this.band2 = new Rope(6, 4.2, 0, 0);
     this.trail = []; this.hitCD = 0; this.clashCD = 0;
@@ -87,7 +88,18 @@ class Remote {
       q.y = lerp(from.j[2 * i + 1], src.j[2 * i + 1], ex ? 1 : k) + dy;
     }
     this.x = x; this.y = y; this.ang = ang;
-    this.ic = src.ic || 0; // iai charge (0..1) while they hold it
+    const ic = src.ic || 0; // iai charge (0..1) while they hold it
+    if (ic >= 1 && this.ic < 1) Sound.shing(); // you can hear a full charge coming
+    this.ic = ic;
+    // dismembered on death: same cuts as on their screen, bleeding and tumbling locally
+    const cm = src.cm || 0;
+    if (cm && !this.cm) { this.cutT = 0; this.headAng = 0; this.headSpin = rand(-16, 16); }
+    this.cm = cm;
+    if (cm) {
+      this.cutT += dt;
+      bleed(this.pose, cm, this.cutT, '#b3122a', 1, dt);
+      this.headSpin *= 0.995; this.headAng += this.headSpin * dt;
+    }
     const c = Math.cos(ang), s = Math.sin(ang);
     this.hx = this.pose.hF.x; this.hy = this.pose.hF.y;
     this.bx = this.hx + c * 10; this.by = this.hy + s * 10;
@@ -106,7 +118,7 @@ class Remote {
     ctx.globalAlpha = (this.fl & 32) && Math.floor(G.time * 18) % 2 === 0 ? 0.45 : 1;
     this.band2.draw(ctx, shade(st.band, -0.2), 2.4);
     this.band1.draw(ctx, st.band, 2.8);
-    drawFigure(ctx, p, st, rag ? sgn(p.head.x - p.hip.x) : this.f, false);
+    drawFigure(ctx, p, st, rag ? sgn(p.head.x - p.hip.x) : this.f, false, this.cm || 0, this.cm ? this.headAng : null);
     drawSlashTrail(ctx, this.trail);
     if (this.fl & 128) drawIaiCharge(ctx, this.x, this.y, this.ic);
     drawKatana(ctx, this.hx, this.hy, this.ang, 80, 1, st, this.fl & 256 || this.ic >= 1 ? '#ffd76a' : Math.abs(this.av) > 26 ? '#bff6ff' : null);
@@ -278,6 +290,7 @@ const Net = {
       f: p.facing, hp: p.hp, fl: p.netFlags(), a: Math.round(sw.ang * 1000) / 1000, av: Math.round(sw.av * 10) / 10, j,
     };
     if (p.iai && p.iai.phase === 'charge') s.ic = Math.round(p.iai.charge * 10) / 10;
+    if (p.rag && p.rag.cut) s.cm = p.rag.cut;
     this.lastSent = s;
     this.send(s);
   },

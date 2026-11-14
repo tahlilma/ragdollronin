@@ -83,18 +83,43 @@ function strokeLine3(ctx, a, b, c, w, col) {
 }
 const lp = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
 
-function drawFigure(ctx, p, st, f, flash) {
+// a line `len` long from `from`, pointing away from `away` (the stub of a severed limb / half-torso)
+function stubEnd(from, away, len) {
+  const dx = from.x - away.x, dy = from.y - away.y, d = Math.hypot(dx, dy) || 1;
+  return { x: from.x + (dx / d) * len, y: from.y + (dy / d) * len };
+}
+function drawStump(ctx, x, y, r) {
+  ctx.fillStyle = '#5a0710'; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#c8142a'; ctx.beginPath(); ctx.arc(x, y, r * 0.62, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#efe2d0'; ctx.beginPath(); ctx.arc(x, y, r * 0.22, 0, TAU); ctx.fill(); // bone
+}
+
+// cut: severed-part bitmask (CUT.*); headAng: spin of a severed head
+function drawFigure(ctx, p, st, f, flash, cut = 0, headAng = null) {
   if (flash) st = whiteStyle(st);
   const s = st.s;
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  strokeLine3(ctx, p.neck, p.eB, p.hB, 5 * s, shade(st.arm, -0.3));
+  const stumps = [];
+  if (cut & CUT.armB) {
+    const e = stubEnd(p.eB, p.hB, 10 * s);
+    strokeLine3(ctx, e, p.eB, p.hB, 5 * s, shade(st.arm, -0.3));
+    stumps.push([e, 3 * s], [p.neck, 3.5 * s]);
+  } else strokeLine3(ctx, p.neck, p.eB, p.hB, 5 * s, shade(st.arm, -0.3));
   strokeLine(ctx, p.kB, p.fB, 6 * s, shade(st.leg, -0.2));
   strokeLine(ctx, p.kF, p.fF, 6 * s, st.leg);
   strokeLine(ctx, p.fB, { x: p.fB.x + f * 4 * s, y: p.fB.y }, 4.5 * s, st.foot);
   strokeLine(ctx, p.fF, { x: p.fF.x + f * 4 * s, y: p.fF.y }, 4.5 * s, st.foot);
-  // torso
-  strokeLine(ctx, p.hip, p.neck, 13 * s, st.gi);
-  if (st.armor) {
+  // torso (cut in half at the waist: two stubs)
+  const halved = cut & CUT.waist;
+  if (halved) {
+    const upEnd = stubEnd(p.neck, p.head, 11 * s);
+    const knees = { x: (p.kB.x + p.kF.x) / 2, y: (p.kB.y + p.kF.y) / 2 };
+    const loEnd = stubEnd(p.hip, knees, 7 * s);
+    strokeLine(ctx, p.neck, upEnd, 13 * s, st.armor || st.gi);
+    strokeLine(ctx, p.hip, loEnd, 13 * s, st.gi);
+    stumps.push([upEnd, 6 * s], [loEnd, 6 * s]);
+  } else strokeLine(ctx, p.hip, p.neck, 13 * s, st.gi);
+  if (st.armor && !halved) {
     const a = lp(p.hip, p.neck, 0.18), b = lp(p.hip, p.neck, 0.86);
     strokeLine(ctx, a, b, 15 * s, st.armor);
     const dx = p.neck.x - p.hip.x, dy = p.neck.y - p.hip.y, d = Math.hypot(dx, dy) || 1;
@@ -112,11 +137,18 @@ function drawFigure(ctx, p, st, f, flash) {
     const c = lp(p.hip, p.neck, 0.05);
     strokeLine(ctx, { x: c.x - 9 * s, y: c.y }, { x: c.x + 9 * s, y: c.y }, 7 * s, st.hakama);
   }
-  const ob = lp(p.hip, p.neck, 0.14);
-  strokeLine(ctx, { x: ob.x - 6 * s, y: ob.y + 0.5 * s }, { x: ob.x + 6 * s, y: ob.y - 0.5 * s }, 3.5 * s, st.obi);
-  // thighs (hakama)
-  strokeLine(ctx, p.hip, p.kB, 11 * s, shade(st.hakama, -0.18));
-  strokeLine(ctx, p.hip, p.kF, 11 * s, st.hakama);
+  if (!halved) {
+    const ob = lp(p.hip, p.neck, 0.14);
+    strokeLine(ctx, { x: ob.x - 6 * s, y: ob.y + 0.5 * s }, { x: ob.x + 6 * s, y: ob.y - 0.5 * s }, 3.5 * s, st.obi);
+  }
+  // thighs (hakama); a severed leg keeps a thigh stub
+  for (const [bit, k, foot, col] of [[CUT.legB, p.kB, p.fB, shade(st.hakama, -0.18)], [CUT.legF, p.kF, p.fF, st.hakama]]) {
+    if (cut & bit) {
+      const e = stubEnd(k, foot, 11 * s);
+      strokeLine(ctx, k, e, 11 * s, col);
+      stumps.push([e, 4.5 * s], [p.hip, 5 * s]);
+    } else strokeLine(ctx, p.hip, k, 11 * s, col);
+  }
   if (st.stripe) {
     ctx.strokeStyle = st.stripe; ctx.lineWidth = 1.6 * s;
     for (const kk of [p.kB, p.kF]) for (let i = 1; i <= 2; i++) {
@@ -124,18 +156,31 @@ function drawFigure(ctx, p, st, f, flash) {
       ctx.beginPath(); ctx.moveTo(c.x - 4 * s, c.y - 1 * s); ctx.lineTo(c.x + 4 * s, c.y + 1.5 * s); ctx.stroke();
     }
   }
-  drawHead(ctx, p, st, f);
-  strokeLine3(ctx, p.neck, p.eF, p.hF, 5.5 * s, st.arm);
+  if (cut & CUT.head) {
+    stumps.push([p.neck, 4.5 * s]);
+    drawHead(ctx, p, st, f, headAng === null ? 0 : headAng, true);
+  } else drawHead(ctx, p, st, f);
+  if (cut & CUT.armF) {
+    const e = stubEnd(p.eF, p.hF, 10 * s);
+    strokeLine3(ctx, e, p.eF, p.hF, 5.5 * s, st.arm);
+    stumps.push([e, 3 * s], [p.neck, 3.5 * s]);
+  } else strokeLine3(ctx, p.neck, p.eF, p.hF, 5.5 * s, st.arm);
   ctx.fillStyle = st.skin;
   ctx.beginPath(); ctx.arc(p.hF.x, p.hF.y, 2.6 * s, 0, TAU); ctx.fill();
+  if (!flash) for (const [pt, r] of stumps) drawStump(ctx, pt.x, pt.y, r);
 }
 
-function drawHead(ctx, p, st, f) {
+// angOverride / severed: a cut-off head spins on its own and shows the wound at its base
+function drawHead(ctx, p, st, f, angOverride = null, severed = false) {
   const s = st.s, h = p.head, r = 7.5 * s;
-  const ang = Math.atan2(h.y - p.neck.y, h.x - p.neck.x) + Math.PI / 2;
+  const ang = angOverride !== null ? angOverride : Math.atan2(h.y - p.neck.y, h.x - p.neck.x) + Math.PI / 2;
   ctx.save();
   ctx.translate(h.x, h.y); ctx.rotate(ang);
   if (f < 0) ctx.scale(-1, 1);
+  if (severed) { // ragged neck under the head
+    ctx.fillStyle = st.skin; ctx.fillRect(-r * 0.35, r * 0.6, r * 0.7, r * 0.7);
+    ctx.fillStyle = '#b3122a'; ctx.beginPath(); ctx.ellipse(0, r * 1.3, r * 0.42, r * 0.2, 0, 0, TAU); ctx.fill();
+  }
   const circ = (x, y, rr, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, rr, 0, TAU); ctx.fill(); };
   const poly = (pts, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]); ctx.closePath(); ctx.fill(); };
   switch (st.head) {
@@ -210,7 +255,7 @@ function drawHead(ctx, p, st, f) {
 }
 
 // katana: hand at (hx,hy), pointing ang, len = hand->tip
-function drawKatana(ctx, hx, hy, ang, len, s, st, glow) {
+function drawKatana(ctx, hx, hy, ang, len, s, st, glow, blood = 0) {
   const c = Math.cos(ang), sn = Math.sin(ang), px = -sn, py = c;
   ctx.lineCap = 'round';
   ctx.strokeStyle = st.hilt || '#2a1a1a'; ctx.lineWidth = 3.6 * s;
@@ -227,6 +272,64 @@ function drawKatana(ctx, hx, hy, ang, len, s, st, glow) {
   ctx.shadowBlur = 0;
   ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 1 * s;
   ctx.beginPath(); ctx.moveTo(bx + px * 0.8, by + py * 0.8); ctx.quadraticCurveTo(mx + px * 0.8, my + py * 0.8, tx, ty); ctx.stroke();
+  if (blood > 0.02 && Settings.gore) { // fresh blood coating the outer edge of the blade
+    const sx = lerp(bx, tx, 0.35), sy = lerp(by, ty, 0.35);
+    ctx.strokeStyle = `rgba(150,8,20,${Math.min(0.9, blood)})`; ctx.lineWidth = 2.6 * s;
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.quadraticCurveTo(mx, my, tx, ty); ctx.stroke();
+  }
+}
+
+// ---------- dismemberment ----------
+const CUT = { head: 1, armF: 2, armB: 4, legF: 8, legB: 16, waist: 32 };
+const SEVER = {
+  head: { remove: [['head', 'neck'], ['head', 'hip']], piece: ['head'] },
+  armF: { remove: [['neck', 'eF']], piece: ['eF', 'hF'] },
+  armB: { remove: [['neck', 'eB']], piece: ['eB', 'hB'] },
+  legF: { remove: [['hip', 'kF']], piece: ['kF', 'fF'] },
+  legB: { remove: [['hip', 'kB']], piece: ['kB', 'fB'] },
+  waist: { remove: [['neck', 'hip'], ['head', 'hip']], piece: ['head', 'neck', 'eF', 'hF', 'eB', 'hB'] },
+};
+// which part a blow at (hx, hy) takes off, if any. Harder blows sever more often; force = always.
+function pickSever(p, hx, hy, dmg, force) {
+  if (!Settings.gore) return null;
+  const chance = force || dmg >= 3 ? 1 : dmg === 2 ? 0.6 : 0.3;
+  if (Math.random() > chance) return null;
+  const segs = [['head', p.head, p.neck], ['armF', p.neck, p.hF], ['armB', p.neck, p.hB], ['legF', p.hip, p.fF], ['legB', p.hip, p.fB], ['torso', p.neck, p.hip]];
+  let best = 'torso', bd = 1e9;
+  for (const [n, a, b] of segs) {
+    const d = pointSegDist(hx, hy, a.x, a.y, b.x, b.y) - (n === 'head' ? 6 : 0);
+    if (d < bd) { bd = d; best = n; }
+  }
+  if (best === 'torso') best = dmg >= 3 || force ? 'waist' : pick(['head', 'armF', 'armB']);
+  return best;
+}
+// open wounds on a (possibly dismembered) pose: [x, y, dirX, dirY, strength]
+function stumpPoints(p, cut) {
+  const out = [];
+  const n = (x, y) => { const l = Math.hypot(x, y) || 1; return [x / l, y / l]; };
+  const up = n(p.neck.x - p.hip.x, p.neck.y - p.hip.y), down = [-up[0], -up[1]];
+  if (cut & CUT.head) out.push([p.neck.x, p.neck.y, up[0], up[1], 1], [p.head.x, p.head.y + 6, 0, 1, 0.3]);
+  if (cut & CUT.armF) out.push([p.neck.x, p.neck.y + 3, up[0], up[1], 0.6], [p.eF.x, p.eF.y, ...n(p.eF.x - p.hF.x, p.eF.y - p.hF.y), 0.3]);
+  if (cut & CUT.armB) out.push([p.neck.x, p.neck.y + 3, up[0], up[1], 0.6], [p.eB.x, p.eB.y, ...n(p.eB.x - p.hB.x, p.eB.y - p.hB.y), 0.3]);
+  if (cut & CUT.legF) out.push([p.hip.x, p.hip.y, down[0], down[1], 0.6], [p.kF.x, p.kF.y, ...n(p.kF.x - p.fF.x, p.kF.y - p.fF.y), 0.3]);
+  if (cut & CUT.legB) out.push([p.hip.x, p.hip.y, down[0], down[1], 0.6], [p.kB.x, p.kB.y, ...n(p.kB.x - p.fB.x, p.kB.y - p.fB.y), 0.3]);
+  if (cut & CUT.waist) {
+    const u = n(p.neck.x - p.head.x, p.neck.y - p.head.y);
+    const knees = { x: (p.kB.x + p.kF.x) / 2, y: (p.kB.y + p.kF.y) / 2 };
+    const l = n(p.hip.x - knees.x, p.hip.y - knees.y);
+    out.push([p.neck.x + u[0] * 10, p.neck.y + u[1] * 10, u[0], u[1], 0.9], [p.hip.x + l[0] * 6, p.hip.y + l[1] * 6, l[0], l[1], 0.9]);
+  }
+  return out;
+}
+// arterial spray from the wounds: pulses like a heartbeat and weakens over ~2.6 s
+function bleed(p, cut, t, col, scale, dt) {
+  if (!cut || !Settings.gore || t > 2.6) return;
+  const fade = 1 - t / 2.6, pulse = 0.3 + 0.7 * Math.max(0, Math.sin(t * 13));
+  for (const [x, y, dx, dy, k] of stumpPoints(p, cut)) {
+    if (Math.random() > 55 * k * fade * dt * (0.5 + pulse)) continue;
+    const sp = (110 + 420 * pulse) * fade * rand(0.6, 1.2), a = Math.atan2(dy, dx) + rand(-0.3, 0.3);
+    FX.add({ t: 'blob', x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 1.8, max: 1.8, col, grav: 1400, size: rand(1.3, 3) * scale });
+  }
 }
 
 function drawStars(ctx, x, y, t, r = 12) {
@@ -272,6 +375,19 @@ class Ragdoll {
     const d = (a, b) => Math.hypot(pose[a].x - pose[b].x, pose[a].y - pose[b].y);
     this.c = BONES.map(([a, b]) => [a, b, d(a, b)]);
     this.c.push(['head', 'hip', d('head', 'hip')]);
+    this.cut = 0;
+  }
+  // cut a part off: drop the joints holding it on and fling it away. Returns true if newly cut.
+  sever(part, vx, vy) {
+    const def = SEVER[part];
+    if (!def || this.cut & CUT[part]) return false;
+    this.cut |= CUT[part];
+    this.c = this.c.filter(([a, b]) => !def.remove.some(([x, y]) => (a === x && b === y) || (a === y && b === x)));
+    for (const k of def.piece) {
+      const q = this.p[k];
+      q.ox -= (vx + rand(-60, 60)) * STEP; q.oy -= (vy + rand(-60, 60)) * STEP;
+    }
+    return true;
   }
   update(dt, L) {
     const g = GRAV * dt * dt;

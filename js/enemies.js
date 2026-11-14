@@ -18,6 +18,12 @@ function setBlade(b, ax, ay, bx, by) {
   else { b.pax = b.ax; b.pay = b.ay; b.pbx = b.bx; b.pby = b.by; }
   b.ax = ax; b.ay = ay; b.bx = bx; b.by = by;
 }
+// the point on a blade closest to (x, y): where it cut you
+function bladePointNear(b, x, y) {
+  const dx = b.bx - b.ax, dy = b.by - b.ay, l2 = dx * dx + dy * dy || 1;
+  const t = clamp(((x - b.ax) * dx + (y - b.ay) * dy) / l2, 0, 1);
+  return { x: b.ax + dx * t, y: b.ay + dy * t };
+}
 function startSwing(b) { b.hitDone = false; b.cancelled = false; b.t = 0; }
 // tilt a held weapon up just enough that its tip stays above the floor the wielder stands on
 function keepAboveGround(wa, shy, reach, footY) {
@@ -47,7 +53,7 @@ function bladeAttack(e, b) {
   if (segRect(b.ax, b.ay, b.bx, b.by, hb) >= 0 || segRect(mx0, my0, mx1, my1, hb) >= 0) {
     const kx = b.kx !== null ? b.kx * e.facing : e.facing * 520;
     const ky = b.ky !== null ? b.ky : -380;
-    if (p.hurt(b.dmg, kx, ky, e.name)) b.hitDone = true;
+    if (p.hurt(b.dmg, kx, ky, e.name, 0, bladePointNear(b, p.x, p.y))) b.hitDone = true;
   }
 }
 
@@ -78,6 +84,7 @@ class Actor {
     if (this.dead) return;
     if (this.state === 'stagger') dmg += 1;
     this.hp -= dmg; this.flash = 0.12;
+    this.lastHit = { hx, hy, dmg, dx, dy }; // decides what gets cut off if this blow kills
     FX.blood(hx, hy, 5 + dmg * 5, dx, dy, this.bloodCol);
     Sound.slash(dmg);
     if (dmg >= 3) FX.text(hx, hy - 14, 'CRIT!', '#ffe14a', 22);
@@ -354,21 +361,49 @@ class Corpse {
     this.rag = new Ragdoll(e.pose, vx, vy, rand(-8, 8));
     this.style = e.style; this.t = 0; this.pose = newPose();
     this.blen = e.bladeLen || 0; this.s = e.s || 1;
+    this.col = e.bloodCol || '#b3122a';
+    this.headAng = Math.atan2(e.pose.head.y - e.pose.neck.y, e.pose.head.x - e.pose.neck.x) + Math.PI / 2;
+    this.headSpin = rand(-16, 16);
+    this.poolT = 0; this.puddle = null;
+    // the killing blow decides what comes off
+    const h = e.lastHit;
+    if (h) {
+      const part = pickSever(e.pose, h.hx, h.hy, h.dmg, false);
+      if (part && this.rag.sever(part, h.dx * 420, -280 + h.dy * 220)) {
+        FX.blood(h.hx, h.hy, 26, h.dx, h.dy, this.col);
+        if (part === 'head') FX.text(e.x, e.y - 60, pick(['DECAPITATED!', 'HEADS UP!', 'OFF WITH IT!']), '#ff5a5a', 18);
+        else if (part === 'waist') FX.text(e.x, e.y - 60, 'CUT IN HALF!', '#ff5a5a', 18);
+      }
+    }
     this.rag.toPose(this.pose);
   }
   update(dt) {
     this.t += dt;
-    if (this.t >= 6) return;
+    if (this.t >= 10) return;
     this.rag.update(dt, G.level); this.rag.toPose(this.pose);
-    const p = this.pose;
+    const p = this.pose, cut = this.rag.cut;
+    bleed(p, cut, this.t, this.col, this.s, dt);
+    if (cut & CUT.head) { // a loose head tumbles until it comes to rest
+      const q = this.rag.p.head, sp = Math.hypot(q.x - q.ox, q.y - q.oy) / STEP;
+      this.headSpin *= sp < 40 ? 0.85 : 0.995;
+      this.headAng += this.headSpin * dt;
+    }
+    // once the body settles it bleeds out into a spreading pool
+    if (Settings.gore && this.t > 0.6 && this.t < 7 && this.rag.speed() < 60) {
+      const gy = G.level.groundBelow(p.hip.x, p.hip.y - 10, 2);
+      if (gy !== null && Math.abs(gy - p.hip.y) < 30) {
+        if (!this.puddle) this.puddle = FX.pool(p.hip.x, gy + 1, this.col);
+        this.puddle.r = Math.min(this.puddle.r + dt * (cut ? 9 : 4) * this.s, (cut ? 30 : 18) * this.s);
+      }
+    }
     if (this.blen) this.wang = fitBladeAngle(G.level, p.hF.x, p.hF.y, Math.atan2(p.hF.y - p.eF.y, p.hF.x - p.eF.x), this.blen);
   }
-  get gone() { return this.t > 8 || this.pose.hip.y > G.level.height + 300; }
+  get gone() { return this.t > 12 || this.pose.hip.y > G.level.height + 300; }
   draw(ctx) {
-    ctx.globalAlpha = this.t > 6 ? Math.max(0, 1 - (this.t - 6) / 2) : 1;
+    ctx.globalAlpha = this.t > 10 ? Math.max(0, 1 - (this.t - 10) / 2) : 1;
     const p = this.pose;
-    drawFigure(ctx, p, this.style, sgn(p.head.x - p.hip.x), this.t < 0.08);
-    if (this.blen) drawKatana(ctx, p.hF.x, p.hF.y, this.wang !== undefined ? this.wang : Math.atan2(p.hF.y - p.eF.y, p.hF.x - p.eF.x), this.blen, this.s, this.style, null);
+    drawFigure(ctx, p, this.style, sgn(p.head.x - p.hip.x), this.t < 0.08, this.rag.cut, this.headAng);
+    if (this.blen) drawKatana(ctx, p.hF.x, p.hF.y, this.wang !== undefined ? this.wang : Math.atan2(p.hF.y - p.eF.y, p.hF.x - p.eF.x), this.blen, this.s, this.style, null, 0.6);
     ctx.globalAlpha = 1;
   }
 }

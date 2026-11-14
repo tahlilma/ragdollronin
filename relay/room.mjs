@@ -33,7 +33,7 @@ export class DuelRoom {
         break;
       case 'hit': { // attacker says it cut someone; only the victim's client decides if it lands
         const q = this.players.get(m.to | 0);
-        if (q && q !== p) this.sendTo(q, { t: 'hit', from: p.id, dmg: Math.min(3, Math.max(1, m.dmg | 0)), kx: num(m.kx), ky: num(m.ky), x: num(m.x), y: num(m.y) });
+        if (q && q !== p) this.sendTo(q, { t: 'hit', from: p.id, dmg: Math.min(4, Math.max(1, m.dmg | 0)), kx: num(m.kx), ky: num(m.ky), x: num(m.x), y: num(m.y) });
         break;
       }
       case 'kick': { // shove (no damage); the victim's client applies it

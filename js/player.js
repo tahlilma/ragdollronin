@@ -8,7 +8,9 @@ const SW_RMIN = 4, SW_RMAX = 20;  // how far the hand reaches from the shoulder
 const RUN_SPEED = 275, JUMP_V = 720, DJUMP_V = 660, DASH_V = 950, DASH_T = 0.16;
 const PIVOT_K = 5200;             // how hard the mouse swings you around a planted blade
 const NO_INPUT = { down: () => false, take: () => false, mr: false, ml: false };
-const IAI_KI = 25, IAI_CHARGE = 0.6, IAI_STRIKE = 0.15, IAI_RECOVER = 0.3;
+// iai balance: a full charge is lethal (4 dmg, dismembers on a kill), but it's slow to charge, costly,
+// on a cooldown, parryable by a fast counter-swing, and a whiff leaves you wide open
+const IAI_KI = 35, IAI_CHARGE = 0.8, IAI_STRIKE = 0.15, IAI_RECOVER = 0.4, IAI_WHIFF = 0.8, IAI_CD = 1.4;
 
 // distance from (sx,sy) along `ang` to the first solid tile within [from, to]; to + 1 when clear
 function rayFirstSolid(L, sx, sy, ang, from, to) {
@@ -45,7 +47,7 @@ class Player {
     this.phase = 0; this.lean = 0; this.pogoCD = 0; this.lastVy = 0; this.airT = 0;
     this.pose = newPose(); this.tmpPose = newPose(); this.snapPose = newPose();
     this.ghosts = []; this.ghostT = 0;
-    this.kickT = 0; this.kickCD = 0; this.riposte = 0; this.iai = null;
+    this.kickT = 0; this.kickCD = 0; this.riposte = 0; this.iai = null; this.iaiCD = 0;
     this.style = style || STYLES.player;
     this.sword = { ang: -0.4, av: 0, r: 12, rDes: 12, len: 80, base: 10, hx: x, hy: y, bx: x, by: y, tx: x, ty: y, speed: 0, clangCD: 0, trail: [] };
     this.band1 = new Rope(7, 4.5, x, y - 30); this.band2 = new Rope(6, 4.2, x, y - 30);
@@ -74,9 +76,20 @@ class Player {
     sw.clangCD -= dt; this.invuln -= dt; this.dashCD -= dt; this.plantCD -= dt; this.pogoCD -= dt; this.getupT -= dt; this.stun -= dt;
     this.kickCD -= dt; this.kickT -= dt; this.riposte -= dt;
 
+    sw.blood = Math.max(0, (sw.blood || 0) - dt * 0.05);
+    if (sw.blood > 0.15 && Settings.gore && Math.random() < sw.blood * 0.03) { // drips off the tip
+      FX.add({ t: 'blob', x: sw.tx, y: sw.ty, vx: rand(-15, 15), vy: 20, life: 1.5, max: 1.5, col: '#9e0f1e', grav: 1400, size: rand(1.2, 2) });
+    }
     if (this.dead) {
       this.deadT += dt;
       this.rag.update(dt, L); this.rag.toPose(this.pose); this.ragSword();
+      const cut = this.rag.cut;
+      bleed(this.pose, cut, this.deadT, '#b3122a', 1, dt);
+      if (cut & CUT.head) {
+        const q = this.rag.p.head, sp = Math.hypot(q.x - q.ox, q.y - q.oy) / STEP;
+        this.headSpin = (this.headSpin === undefined ? rand(-16, 16) : this.headSpin) * (sp < 40 ? 0.85 : 0.995);
+        this.headAng = (this.headAng || 0) + this.headSpin * dt;
+      }
       return;
     }
     if (this.rag) { this.updateRagdoll(dt); return; }
@@ -377,7 +390,7 @@ class Player {
     let landed = false;
     const ripost = () => { // a hit inside the riposte window after a parry is always a critical
       if (this.riposte <= 0) return;
-      this.riposte = 0; dmg = 3;
+      this.riposte = 0; dmg = Math.max(dmg, 3);
       FX.text(this.x, this.y - 70, 'RIPOSTE!', '#ffd76a', 24);
       Sound.riposte(); G.slowmo(0.25, 0.3); G.flash = Math.max(G.flash, 0.15);
     };
@@ -391,7 +404,7 @@ class Player {
           ripost();
           e.swordCD = 0.2;
           e.takeHit(dmg, dirx, diry, hx, hy, speed, null);
-          landed = true;
+          landed = true; this.sword.blood = Math.min(1, (this.sword.blood || 0) + 0.35);
           G.hitstop = Math.max(G.hitstop, 0.03 + dmg * 0.02);
           G.shake(2 + dmg * 2);
         } else if (!e.isBoss) {
@@ -409,7 +422,7 @@ class Player {
       ripost();
       r.hitCD = 0.3;
       Net.send({ t: 'hit', to: r.id, dmg, kx: Math.round(dirx * (380 + dmg * 170)), ky: Math.round(Math.min(-250, diry * 300) - dmg * 80), x: Math.round(hx), y: Math.round(hy) });
-      landed = true;
+      landed = true; this.sword.blood = Math.min(1, (this.sword.blood || 0) + 0.35);
       G.hitstop = Math.max(G.hitstop, 0.03);
       G.shake(2 + dmg * 2);
       // predicted feedback: show the cut now instead of waiting a round trip for the victim's reply
@@ -470,7 +483,8 @@ class Player {
   updateIai(dt, I) {
     const z = this.iai;
     if (!z) {
-      if (I.ml && !this.planted && this.stun <= 0 && this.dashT <= 0) {
+      this.iaiCD -= dt;
+      if (I.ml && !this.planted && this.stun <= 0 && this.dashT <= 0 && this.iaiCD <= 0) {
         if (this.ki < IAI_KI) { if (I.take('Mouse0')) FX.text(this.x, this.y - 54, 'no ki', '#9fd8ff', 13); return; }
         this.iai = { phase: 'charge', t: 0, charge: 0, glint: false };
         Sound.swing();
@@ -486,8 +500,12 @@ class Player {
         this.startIai();
       }
     } else if (z.phase === 'strike') {
-      if (z.t >= IAI_STRIKE || this.hitWall) { z.phase = 'recover'; z.t = 0; this.vx *= 0.25; this.vy *= 0.25; }
-    } else if (z.t >= IAI_RECOVER) this.iai = null;
+      if (z.t >= IAI_STRIKE || this.hitWall) {
+        z.phase = 'recover'; z.t = 0; this.vx *= 0.25; this.vy *= 0.25;
+        this.iaiCD = IAI_CD;
+        if (!z.hit) FX.text(this.x, this.y - 54, 'overextended', '#ffb0a0', 13); // a whiff leaves you open longer
+      }
+    } else if (z.t >= (z.hit ? IAI_RECOVER : IAI_WHIFF)) this.iai = null;
   }
   startIai() {
     const z = this.iai, sh = this.shoulder();
@@ -520,25 +538,37 @@ class Player {
     this.applyGeom(g);
     this.bladeBlocked(g, this.swordGeom(sh.x, sh.y, prev, sw.r)); // enemy blades in the way get parried
     const c = Math.cos(z.dir), s = Math.sin(z.dir);
-    this.bladeStrike(g, 2600, c, s, z.charge >= 1 ? 3 : 2);
+    // 2 damage for a quick draw, 3 past 60% charge, 4 at full (and 3+ always dismembers on a kill)
+    if (this.bladeStrike(g, 2600, c, s, z.charge >= 1 ? 4 : z.charge >= 0.6 ? 3 : 2)) z.hit = true;
     sw.trail.push({ bx: g.bx, by: g.by, tx: g.tx, ty: g.ty, t: G.time, s: 34 });
     while (sw.trail.length && G.time - sw.trail[0].t > 0.12) sw.trail.shift();
     Sound.whoosh(2600);
   }
 
   // ---- damage / ragdoll ----
-  hurt(dmg, kx, ky, src, attackerId) {
+  // cutAt: where a blade struck {x, y}; a killing blade blow can take a limb or the head
+  hurt(dmg, kx, ky, src, attackerId, cutAt) {
     if (this.dead || this.rag || this.invuln > 0 || this.dashT > 0) return false;
     this.hp -= dmg;
     G.lastHitBy = src;
     if (attackerId) this.lastAttacker = { id: attackerId, t: G.time };
     Sound.hurt(); G.shake(10); G.hitstop = Math.max(G.hitstop, 0.09);
-    FX.blood(this.x, this.y - 10, 14, kx, ky);
+    const at = cutAt || { x: this.x, y: this.y - 10 };
+    FX.blood(at.x, at.y, 18, kx, ky);
+    const pose0 = copyPose(newPose(), this.pose);
     FX.text(this.x, this.y - 50, pick(['OOF', 'AGH', 'OW', 'ACK', 'HNNG', 'WAH']), '#ff8080', 18);
     this.unplant(); this.dashT = 0; this.stun = 0; this.iai = null;
     this.rag = new Ragdoll(this.pose, this.vx * 0.3 + kx, this.vy * 0.2 + ky, rand(-6, 6));
     this.ragT = 0.65 + dmg * 0.2;
-    if (this.hp <= 0) { this.hp = 0; this.die(src); }
+    if (this.hp <= 0) {
+      this.hp = 0; this.die(src);
+      const part = cutAt ? pickSever(pose0, cutAt.x, cutAt.y, dmg, false) : null;
+      const l = Math.hypot(kx, ky) || 1;
+      if (part && this.rag.sever(part, (kx / l) * 420, -300)) {
+        FX.blood(at.x, at.y, 30, kx, ky);
+        if (part === 'head') FX.text(this.x, this.y - 64, 'DECAPITATED', '#ff5a5a', 20);
+      }
+    }
     return true;
   }
   die(src) {
@@ -557,7 +587,9 @@ class Player {
   }
   getParried(x, y) {
     if (this.dead || this.rag) return;
-    this.stun = 0.75;
+    const wasIai = !!this.iai;
+    this.stun = wasIai ? 1.1 : 0.75; // getting your draw-cut parried is the worst place to be
+    if (wasIai) { this.iai = null; this.iaiCD = IAI_CD; this.vx *= 0.2; this.vy *= 0.2; FX.text(this.x, this.y - 84, 'IAI PARRIED', '#ff9090', 16); }
     this.sword.av = (Math.random() < 0.5 ? -1 : 1) * 28;
     FX.parryBurst(x, y, 1); Sound.parry(); G.shake(8);
     FX.text(this.x, this.y - 66, 'PARRIED!', '#ff9090', 18);
@@ -638,12 +670,12 @@ class Player {
     if (blink) ctx.globalAlpha = 0.45;
     this.band2.draw(ctx, shade(this.style.band, -0.2), 2.4);
     this.band1.draw(ctx, this.style.band, 2.8);
-    drawFigure(ctx, this.pose, this.style, this.rag ? sgn(this.pose.head.x - this.pose.hip.x) : this.facing, false);
+    drawFigure(ctx, this.pose, this.style, this.rag ? sgn(this.pose.head.x - this.pose.hip.x) : this.facing, false, this.rag ? this.rag.cut : 0, this.headAng === undefined ? null : this.headAng);
     drawSlashTrail(ctx, sw.trail);
     const z = this.iai;
     if (z && z.phase === 'charge' && !this.rag) drawIaiCharge(ctx, this.x, this.y, z.charge);
     const glow = this.riposte > 0 || (z && z.charge >= 1) ? '#ffd76a' : Math.abs(sw.av) > 26 ? '#bff6ff' : null;
-    drawKatana(ctx, sw.hx, sw.hy, sw.ang, sw.len, 1, this.style, glow);
+    drawKatana(ctx, sw.hx, sw.hy, sw.ang, sw.len, 1, this.style, glow, sw.blood);
     if (this.winded && !this.rag && !this.dead) {
       ctx.fillStyle = '#9fd8ff';
       for (let i = 0; i < 2; i++) {

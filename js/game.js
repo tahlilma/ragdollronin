@@ -45,7 +45,7 @@ const G = {
       if (b.guardBreak) {
         FX.spark(cx, cy, 14, null, TAU, 500); Sound.clang(1);
         FX.text(cx, cy - 20, 'GUARD BROKEN', '#ffb0a0', 14);
-        if (p.hurt(b.dmg, away * 600, -420, e.name)) b.hitDone = true;
+        if (p.hurt(b.dmg, away * 600, -420, e.name, 0, { x: cx, y: cy })) b.hitDone = true;
         return;
       }
       Sound.clang(0.8); FX.spark(cx, cy, 12, null, TAU, 450);
@@ -69,7 +69,7 @@ const G = {
     const p = this.player;
     if (!p || p.dead) return;
     const k = 1 + (p.maxHp - p.hp) * 0.3; // the more hurt you are, the further you fly
-    if (p.hurt(m.dmg, clamp(m.kx * k, -1600, 1600), clamp(m.ky * k, -1400, 600), Net.nameOf(m.from), m.from)) {
+    if (p.hurt(m.dmg, clamp(m.kx * k, -1600, 1600), clamp(m.ky * k, -1400, 600), Net.nameOf(m.from), m.from, { x: m.x, y: m.y })) {
       Net.send({ t: 'ouch', by: m.from, dmg: m.dmg, x: Math.round(m.x), y: Math.round(m.y) });
     }
   },
@@ -342,6 +342,7 @@ function buildTitle() {
     wrap.appendChild(btn);
   });
   document.getElementById('muteBtn').textContent = Sound.muted ? 'Sound: off (M)' : 'Sound: on (M)';
+  document.getElementById('goreBtn').textContent = Settings.gore ? 'Gore: on' : 'Gore: off';
   const nameEl = document.getElementById('pvpName');
   if (!nameEl.value) { try { nameEl.value = localStorage.getItem('rr-name') || ''; } catch (e) { /* ignore */ } }
   const roomEl = document.getElementById('pvpRoom');
@@ -466,6 +467,10 @@ document.addEventListener('click', (e) => {
     case 'quit': quitToTitle(); break;
     case 'next': startStage(Math.min(STAGES.length - 1, G.stage + 1)); break;
     case 'mute': Sound.toggleMute(); buildTitle(); break;
+    case 'gore':
+      Settings.gore = !Settings.gore;
+      try { localStorage.setItem('rr-gore', Settings.gore ? '1' : '0'); } catch (err) { /* ignore */ }
+      buildTitle(); break;
     case 'retry': if (G.uiT > 0.5) startStage(G.stage); break;
     case 'pvp': joinPvp(); break;
     case 'help': showScreen('help'); break;

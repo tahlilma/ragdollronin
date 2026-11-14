@@ -5,6 +5,10 @@ const STEP = 1 / 120;      // fixed physics step
 const GRAV = 2000;         // px/s^2
 const T = 40;              // tile size
 
+// player preferences (persisted)
+const Settings = { gore: true };
+try { Settings.gore = localStorage.getItem('rr-gore') !== '0'; } catch (e) { /* storage blocked */ }
+
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const lerp = (a, b, t) => a + (b - a) * t;
 const rand = (a = 0, b = 1) => a + Math.random() * (b - a);
