@@ -18,7 +18,7 @@ function setBlade(b, ax, ay, bx, by) {
   else { b.pax = b.ax; b.pay = b.ay; b.pbx = b.bx; b.pby = b.by; }
   b.ax = ax; b.ay = ay; b.bx = bx; b.by = by;
 }
-function startSwing(b) { b.hitDone = false; b.cancelled = false; }
+function startSwing(b) { b.hitDone = false; b.cancelled = false; b.t = 0; }
 // tilt a held weapon up just enough that its tip stays above the floor the wielder stands on
 function keepAboveGround(wa, shy, reach, footY) {
   const lim = (footY - 4 - shy) / reach;
@@ -30,10 +30,11 @@ function keepAboveGround(wa, shy, reach, footY) {
 // enemy blade sweeping: clash with the player's blade, else hurt the player
 function bladeAttack(e, b) {
   if (!b.active || b.cancelled) return;
+  b.t = (b.t || 0) + STEP; // how long this swing has been live (early parries are "perfect")
   const p = G.player;
   if (p.dead) return;
   const mx0 = (b.ax + b.pax) / 2, my0 = (b.ay + b.pay) / 2, mx1 = (b.bx + b.pbx) / 2, my1 = (b.by + b.pby) / 2;
-  if (!p.rag && !b.hitDone) {
+  if (!p.rag && !b.hitDone && !p.thrown) {
     const sw = p.sword;
     const rr = b.r + 3;
     if (segSegDist(sw.bx, sw.by, sw.tx, sw.ty, b.ax, b.ay, b.bx, b.by) < rr || segSegDist(sw.bx, sw.by, sw.tx, sw.ty, mx0, my0, mx1, my1) < rr) {
@@ -86,6 +87,12 @@ class Actor {
     else this.onHurt(dmg, proj);
   }
   onHurt() {}
+  // shoved by the player's kick: knockback grows with damage taken (ledges and spikes do the rest)
+  kicked(dir) {
+    const k = 1 + (1 - this.hp / this.maxHp) * 1.2;
+    this.vx = dir * 620 * k; this.vy = -330 * k;
+    this.grounded = false;
+  }
   die(vx, vy) {
     if (this.dead) return;
     this.dead = true; this.remove = true;
@@ -206,6 +213,11 @@ class Samurai extends Actor {
     });
   }
   onParried() { this.setState('stagger'); this.staggerT = this.heavy ? 0.8 : 1.1; this.vx = -this.facing * 260; }
+  kicked(dir) {
+    super.kicked(this.heavy ? dir * 0.55 : dir);
+    this.blade.cancelled = true;
+    this.setState('stagger'); this.staggerT = this.heavy ? 0.35 : 0.55;
+  }
   onBlocked() { this.setState('recover'); this.vx = -this.facing * 180; }
   onHurt(dmg) {
     if (this.state === 'stagger') return;

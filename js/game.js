@@ -36,6 +36,10 @@ const G = {
         b.cancelled = true; b.hitDone = true; b.active = false;
         sw.av *= -0.5;
         if (e.onParried) e.onParried(b);
+        // caught in the first ~70 ms of the swing: a perfect parry staggers longer
+        const perfect = (b.t || 0) < 0.07;
+        if (perfect) { if (e.staggerT) e.staggerT *= 1.6; if (e.stagT) e.stagT *= 1.6; }
+        p.gainRiposte(perfect);
         return;
       }
       if (b.guardBreak) {
@@ -64,9 +68,14 @@ const G = {
   onNetHit(m) {
     const p = this.player;
     if (!p || p.dead) return;
-    if (p.hurt(m.dmg, m.kx, m.ky, Net.nameOf(m.from), m.from)) {
+    const k = 1 + (p.maxHp - p.hp) * 0.3; // the more hurt you are, the further you fly
+    if (p.hurt(m.dmg, clamp(m.kx * k, -1600, 1600), clamp(m.ky * k, -1400, 600), Net.nameOf(m.from), m.from)) {
       Net.send({ t: 'ouch', by: m.from, dmg: m.dmg, x: Math.round(m.x), y: Math.round(m.y) });
     }
+  },
+  onNetKick(m) {
+    const p = this.player;
+    if (p && !p.dead) p.kicked(m.kx, m.ky, Net.nameOf(m.from), m.from);
   },
   newPvpMatch(map) { loadPvpMap(map); updateMouseWorld(); this.player.placeSword(); },
   onNetLost() {
@@ -635,7 +644,12 @@ function drawHUD(c, vw, vh) {
   c.fillStyle = dk >= 1 ? '#ffffff' : '#5a8a96'; c.fillRect(18, 62, 150 * dk, 3);
   c.font = `700 11px ${FONT}`; c.textAlign = 'left'; c.textBaseline = 'top';
   c.fillStyle = 'rgba(255,255,255,0.65)';
-  c.fillText(`${p.winded ? 'WINDED' : 'KI'}   DASH${p.airDash > 0 || p.grounded ? '' : ' ✕'}   JUMP ${p.djump > 0 || p.grounded ? '●' : '○'}   VAULT ${'●'.repeat(p.vaults)}${'○'.repeat(3 - p.vaults)}`, 18, 70);
+  c.fillText(`${p.winded ? 'WINDED' : 'KI'}   DASH${p.airDash > 0 || p.grounded ? '' : ' ✕'}   JUMP ${p.djump > 0 || p.grounded ? '●' : '○'}   VAULT ${'●'.repeat(p.vaults)}${'○'.repeat(3 - p.vaults)}   KICK ${p.kickCD <= 0 ? '●' : '○'}`, 18, 70);
+  if (p.thrown) { c.fillStyle = '#9fe8ff'; c.fillText(p.thrown.stuck ? 'BLADE STUCK: click to recall, or walk over it' : 'BLADE THROWN: click to recall', 18, 84); }
+  if (p.riposte > 0) {
+    c.fillStyle = '#ffd76a'; c.font = `900 13px ${FONT}`;
+    c.fillText(`RIPOSTE  ${'█'.repeat(Math.ceil(p.riposte * 10))}`, 18, p.thrown ? 98 : 84);
+  }
   if (G.mode === 'pvp') return;
   const def = STAGES[G.stage];
   c.textAlign = 'right';
@@ -695,7 +709,7 @@ function drawPvpHUD(c, vw, vh, rdt) {
   for (const f of Net.feed) { c.globalAlpha = Math.min(1, f.t); c.fillStyle = f.col; c.fillText(f.text, vw - 20, y); y += 18; }
   c.globalAlpha = 1;
   c.textAlign = 'left'; c.font = `600 11px ${FONT}`; c.fillStyle = 'rgba(255,255,255,0.45)';
-  c.fillText('T  taunt     Esc  menu', 18, 88);
+  c.fillText('T  taunt     Esc  menu', 18, p0hint());
   c.textAlign = 'center'; c.textBaseline = 'middle';
   if (G.mapCard > 0) {
     G.mapCard -= rdt;
@@ -723,6 +737,8 @@ function drawPvpHUD(c, vw, vh, rdt) {
     c.fillText(`Next duel in ${Math.max(1, Math.ceil(Net.over.t))}…`, vw / 2, vh * 0.2 + 100);
   }
 }
+
+function p0hint() { const p = G.player; return 88 + (p.thrown ? 14 : 0) + (p.riposte > 0 ? 14 : 0); }
 
 function drawCursor(c) {
   const x = Input.mx / G.scale, y = Input.my / G.scale;

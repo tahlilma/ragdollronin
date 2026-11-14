@@ -36,6 +36,11 @@ export class DuelRoom {
         if (q && q !== p) this.sendTo(q, { t: 'hit', from: p.id, dmg: Math.min(3, Math.max(1, m.dmg | 0)), kx: num(m.kx), ky: num(m.ky), x: num(m.x), y: num(m.y) });
         break;
       }
+      case 'kick': { // shove (no damage); the victim's client applies it
+        const q = this.players.get(m.to | 0);
+        if (q && q !== p) this.sendTo(q, { t: 'kick', from: p.id, kx: Math.max(-800, Math.min(800, num(m.kx))), ky: Math.max(-600, Math.min(0, num(m.ky))) });
+        break;
+      }
       case 'ouch': this.broadcast({ t: 'ouch', id: p.id, by: m.by | 0, dmg: m.dmg | 0, x: num(m.x), y: num(m.y) }, p.id); break;
       case 'parry': this.broadcast({ t: 'parry', from: p.id, to: m.to | 0, x: num(m.x), y: num(m.y) }, p.id); break;
       case 'say': this.broadcast({ t: 'say', id: p.id, i: m.i | 0 }, p.id); break;

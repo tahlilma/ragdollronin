@@ -32,7 +32,7 @@ class Remote {
   get dead() { return !!(this.fl & 2); }
   hurtbox() { return { x: this.x - 9, y: this.y - 24, w: 18, h: 50 }; }
   vulnerable() { return this.ready && !(this.fl & (1 | 2 | 4 | 32)); }
-  bladeLive() { return this.ready && !(this.fl & (1 | 2)); }
+  bladeLive() { return this.ready && !(this.fl & (1 | 2 | 128)); }
   push(m) {
     const now = performance.now();
     if (typeof m.ts !== 'number') m.ts = now; // old clients: fall back to arrival time
@@ -87,6 +87,20 @@ class Remote {
       q.y = lerp(from.j[2 * i + 1], src.j[2 * i + 1], ex ? 1 : k) + dy;
     }
     this.x = x; this.y = y; this.ang = ang;
+    // a thrown blade flies on its own: draw it where the thrower says it is
+    const ta = src.tw, tb = from.tw;
+    this.tw = ta ? (tb && !ex ? [lerp(tb[0], ta[0], k), lerp(tb[1], ta[1], k), tb[2] + angDiff(tb[2], ta[2]) * k] : ta) : null;
+    if (this.tw) {
+      const tc = Math.cos(this.tw[2]), tsn = Math.sin(this.tw[2]);
+      this.ang = this.tw[2];
+      this.hx = this.tw[0] - tc * 40; this.hy = this.tw[1] - tsn * 40;
+      this.bx = this.tw[0] - tc * 30; this.by = this.tw[1] - tsn * 30; this.tx = this.tw[0] + tc * 40; this.ty = this.tw[1] + tsn * 40;
+      this.trail.length = 0;
+      const h = this.pose.head, f = this.fl & 1 ? 1 : this.f;
+      this.band1.update(h.x - f * 6, h.y - 3, 0); this.band2.update(h.x - f * 6, h.y - 1, 0);
+      this.ready = true;
+      return;
+    }
     const c = Math.cos(ang), s = Math.sin(ang);
     this.hx = this.pose.hF.x; this.hy = this.pose.hF.y;
     this.bx = this.hx + c * 10; this.by = this.hy + s * 10;
@@ -107,7 +121,8 @@ class Remote {
     this.band1.draw(ctx, st.band, 2.8);
     drawFigure(ctx, p, st, rag ? sgn(p.head.x - p.hip.x) : this.f, false);
     drawSlashTrail(ctx, this.trail);
-    drawKatana(ctx, this.hx, this.hy, this.ang, 80, 1, st, Math.abs(this.av) > 26 ? '#bff6ff' : null);
+    if (this.tw) drawSpinBlur(ctx, this.tw[0], this.tw[1]);
+    drawKatana(ctx, this.hx, this.hy, this.ang, 80, 1, st, this.fl & 256 ? '#ffd76a' : Math.abs(this.av) > 26 ? '#bff6ff' : null);
     ctx.globalAlpha = 1;
     if (this.fl & 64) drawStars(ctx, p.head.x, p.head.y - 14, G.time);
     if (this.fl & 2) return;
@@ -226,6 +241,7 @@ const Net = {
         }
         break;
       case 'hit': if (G.mode === 'pvp') G.onNetHit(m); break;
+      case 'kick': if (G.mode === 'pvp') G.onNetKick(m); break;
       case 'ouch':
         if (G.mode !== 'pvp') break;
         if (m.by === this.id) { FX.text(m.x, m.y - 20, m.dmg >= 3 ? 'CRIT!' : 'HIT!', '#ffe14a', 16); break; } // blood already shown on swing
@@ -274,6 +290,7 @@ const Net = {
       t: 's', ts: Math.round(now), x: Math.round(p.x), y: Math.round(p.y), vx: Math.round(p.vx), vy: Math.round(p.vy),
       f: p.facing, hp: p.hp, fl: p.netFlags(), a: Math.round(sw.ang * 1000) / 1000, av: Math.round(sw.av * 10) / 10, j,
     };
+    if (p.thrown) s.tw = [Math.round(p.thrown.x), Math.round(p.thrown.y), Math.round(p.thrown.ang * 100) / 100];
     this.lastSent = s;
     this.send(s);
   },
@@ -294,6 +311,7 @@ const Net = {
       FX.parryBurst(cx, cy, 1); Sound.parry(); G.shake(8);
       G.hitstop = Math.max(G.hitstop, 0.05);
       FX.text(cx, cy - 30, 'PARRY!', '#fff6a0', 22);
+      p.gainRiposte(mine > theirs * 2 + 6); // a far faster blade counts as a perfect parry
     } else if (mine > 3) {
       Sound.clang(clamp(mine / 30, 0.25, 0.8)); FX.spark(cx, cy, 8, null, TAU, 380);
     }

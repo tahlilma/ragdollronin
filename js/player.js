@@ -44,6 +44,7 @@ class Player {
     this.phase = 0; this.lean = 0; this.pogoCD = 0; this.lastVy = 0; this.airT = 0;
     this.pose = newPose(); this.tmpPose = newPose(); this.snapPose = newPose();
     this.ghosts = []; this.ghostT = 0;
+    this.kickT = 0; this.kickCD = 0; this.riposte = 0; this.thrown = null;
     this.style = style || STYLES.player;
     this.sword = { ang: -0.4, av: 0, r: 12, rDes: 12, len: 80, base: 10, hx: x, hy: y, bx: x, by: y, tx: x, ty: y, speed: 0, clangCD: 0, trail: [] };
     this.band1 = new Rope(7, 4.5, x, y - 30); this.band2 = new Rope(6, 4.2, x, y - 30);
@@ -60,6 +61,7 @@ class Player {
   }
   applyGeom(g) { const sw = this.sword; sw.hx = g.hx; sw.hy = g.hy; sw.bx = g.bx; sw.by = g.by; sw.tx = g.tx; sw.ty = g.ty; }
   placeSword() {
+    if (this.thrown) return;
     const sh = this.shoulder();
     this.applyGeom(this.swordGeom(sh.x, sh.y, this.sword.ang, this.sword.r));
   }
@@ -69,13 +71,22 @@ class Player {
     const L = G.level, sw = this.sword;
     const I = G.inputBlocked ? NO_INPUT : Input;
     sw.clangCD -= dt; this.invuln -= dt; this.dashCD -= dt; this.plantCD -= dt; this.pogoCD -= dt; this.getupT -= dt; this.stun -= dt;
+    this.kickCD -= dt; this.kickT -= dt; this.riposte -= dt;
+    if (this.thrown) this.updateThrown(dt, I);
 
     if (this.dead) {
       this.deadT += dt;
-      this.rag.update(dt, L); this.rag.toPose(this.pose); this.ragSword();
+      this.rag.update(dt, L); this.rag.toPose(this.pose); if (!this.thrown) this.ragSword();
       return;
     }
     if (this.rag) { this.updateRagdoll(dt); return; }
+
+    // ---- kick (F) and throw / recall the katana (left click) ----
+    if (I.take('KeyF') && this.kickCD <= 0) this.kick();
+    if (I.take('Mouse0')) {
+      if (this.thrown) this.recall();
+      else if (!this.planted && this.stun <= 0) this.throwSword();
+    }
 
     const ix = (I.down('KeyD', 'ArrowRight') ? 1 : 0) - (I.down('KeyA', 'ArrowLeft') ? 1 : 0);
     const iy = (I.down('KeyS', 'ArrowDown') ? 1 : 0) - (I.down('KeyW', 'ArrowUp') ? 1 : 0);
@@ -85,7 +96,7 @@ class Player {
     if (this.dashT <= 0) this.facing = G.mouse.x >= this.x ? 1 : -1;
 
     // ---- plant the blade tip (hold right mouse) ----
-    this.wantPlant = I.mr && !this.planted && this.plantCD <= 0;
+    this.wantPlant = I.mr && !this.planted && this.plantCD <= 0 && !this.thrown;
     if (this.wantPlant) this.tryPlant();
     if (this.planted && !I.mr) this.unplant();
 
@@ -238,6 +249,13 @@ class Player {
     const mx = G.mouse.x, my = G.mouse.y;
     const target = Math.atan2(my - sh.y, mx - sh.x);
 
+    if (this.thrown) { // empty-handed: catch your breath while the blade flies
+      this.ki = Math.min(100, this.ki + 30 * dt);
+      if (this.winded && this.ki >= 45) this.winded = false;
+      sw.av = 0; sw.trail.length = 0;
+      return;
+    }
+
     if (this.planted) {
       const a = this.planted;
       sw.ang = Math.atan2(a.y - sh.y, a.x - sh.x); sw.av = 0;
@@ -350,18 +368,30 @@ class Player {
     const sw = this.sword;
     const tipSpeed = Math.abs(sw.av) * (sw.r + sw.len * 0.85) + Math.hypot(this.vx, this.vy) * 0.4;
     const d = sgn(sw.av);
-    const dirx = -Math.sin(sw.ang) * d, diry = Math.cos(sw.ang) * d;
-    const dmg = tipSpeed > 2600 ? 3 : tipSpeed > 1500 ? 2 : 1;
+    if (this.bladeStrike(g, tipSpeed, -Math.sin(sw.ang) * d, Math.cos(sw.ang) * d)) sw.av *= 0.72;
+  }
+  // a blade segment g {bx,by,tx,ty} moving at `speed` along (dirx, diry) cuts whatever it touches.
+  // Returns true if it landed a hit. Used by the swung blade and the thrown one.
+  bladeStrike(g, speed, dirx, diry, minDmg = 1) {
+    let dmg = Math.max(minDmg, speed > 2600 ? 3 : speed > 1500 ? 2 : 1);
+    let landed = false;
+    const ripost = () => { // a hit inside the riposte window after a parry is always a critical
+      if (this.riposte <= 0) return;
+      this.riposte = 0; dmg = 3;
+      FX.text(this.x, this.y - 70, 'RIPOSTE!', '#ffd76a', 24);
+      Sound.riposte(); G.slowmo(0.25, 0.3); G.flash = Math.max(G.flash, 0.15);
+    };
     for (const e of G.enemies) {
       if (e.dead || !e.hittable || e.swordCD > 0) continue;
       for (const hb of e.hurtboxes()) {
         const t = segRect(g.bx, g.by, g.tx, g.ty, hb);
         if (t < 0) continue;
         const hx = lerp(g.bx, g.tx, t), hy = lerp(g.by, g.ty, t);
-        if (tipSpeed > 430) {
+        if (speed > 430) {
+          ripost();
           e.swordCD = 0.2;
-          e.takeHit(dmg, dirx, diry, hx, hy, tipSpeed, null);
-          sw.av *= 0.72;
+          e.takeHit(dmg, dirx, diry, hx, hy, speed, null);
+          landed = true;
           G.hitstop = Math.max(G.hitstop, 0.03 + dmg * 0.02);
           G.shake(2 + dmg * 2);
         } else if (!e.isBoss) {
@@ -370,21 +400,140 @@ class Player {
         break;
       }
     }
-    if (G.mode !== 'pvp' || tipSpeed <= 430) return;
+    if (G.mode !== 'pvp' || speed <= 430) return landed;
     for (const r of Net.remotes.values()) {
       if (!r.vulnerable() || r.hitCD > 0) continue;
       const t = segRect(g.bx, g.by, g.tx, g.ty, r.hurtbox());
       if (t < 0) continue;
       const hx = lerp(g.bx, g.tx, t), hy = lerp(g.by, g.ty, t);
+      ripost();
       r.hitCD = 0.3;
       Net.send({ t: 'hit', to: r.id, dmg, kx: Math.round(dirx * (380 + dmg * 170)), ky: Math.round(Math.min(-250, diry * 300) - dmg * 80), x: Math.round(hx), y: Math.round(hy) });
-      sw.av *= 0.72;
+      landed = true;
       G.hitstop = Math.max(G.hitstop, 0.03);
       G.shake(2 + dmg * 2);
       // predicted feedback: show the cut now instead of waiting a round trip for the victim's reply
       FX.spark(hx, hy, 6, null, TAU, 300);
       FX.blood(hx, hy, 8 + dmg * 4, dirx, diry);
       Sound.slash(dmg);
+    }
+    return landed;
+  }
+
+  // a successful parry opens a short riposte window (longer for a perfect, early parry)
+  gainRiposte(perfect) {
+    this.riposte = perfect ? 1.0 : 0.7;
+    if (perfect) FX.text(this.x, this.y - 88, 'PERFECT', '#ffd76a', 18);
+  }
+
+  // ---- kick: no damage, but a big shove. Ring-outs into pits and spikes count as kills ----
+  kick() {
+    this.kickCD = 0.65; this.kickT = 0.22;
+    Sound.swing();
+    const f = this.facing;
+    const box = { x: f > 0 ? this.x + 4 : this.x - 50, y: this.y - 14, w: 46, h: 42 };
+    let landed = false;
+    for (const e of G.enemies) {
+      if (e.dead || !e.hittable || !e.kicked) continue;
+      if (e.hurtboxes().some((hb) => rectsOverlap(hb, box))) { e.kicked(f); landed = true; }
+    }
+    if (G.mode === 'pvp') {
+      for (const r of Net.remotes.values()) {
+        if (!r.vulnerable() || !rectsOverlap(r.hurtbox(), box)) continue;
+        Net.send({ t: 'kick', to: r.id, kx: f * 560, ky: -360 });
+        landed = true;
+      }
+    }
+    if (landed) {
+      Sound.kick(); G.shake(6); G.hitstop = Math.max(G.hitstop, 0.05);
+      FX.dust(this.x + f * 34, this.y + 6, 8, 'rgba(255,255,255,0.6)', 200);
+      FX.ring(this.x + f * 34, this.y + 6, 4, 40, '#ffffff', 0.25, 3);
+      FX.text(this.x + f * 40, this.y - 30, 'KICK!', '#ffffff', 16);
+    }
+  }
+  // knocked down by a kick (no damage). Knockback grows the more hurt you are.
+  kicked(kx, ky, src, attackerId) {
+    if (this.dead || this.rag || this.invuln > 0 || this.dashT > 0) return false;
+    const k = 1 + (this.maxHp - this.hp) * 0.35;
+    if (attackerId) this.lastAttacker = { id: attackerId, t: G.time };
+    G.lastHitBy = src;
+    Sound.kick(); G.shake(8);
+    this.unplant(); this.stun = 0;
+    this.rag = new Ragdoll(this.pose, clamp(kx * k, -1600, 1600), clamp(ky * k, -1400, 600), rand(-5, 5));
+    this.ragT = 0.55;
+    return true;
+  }
+
+  // ---- throw the katana (left click), click again to call it back ----
+  throwSword() {
+    const sw = this.sword;
+    if (this.ki < 20) { FX.text(this.x, this.y - 54, 'no ki', '#9fd8ff', 13); return; }
+    this.ki -= 20;
+    const sh = this.shoulder();
+    const a = Math.atan2(G.mouse.y - sh.y, G.mouse.x - sh.x);
+    const sp = 1250;
+    this.thrown = {
+      x: sw.hx + Math.cos(a) * 40, y: sw.hy + Math.sin(a) * 40,
+      vx: Math.cos(a) * sp + this.vx * 0.5, vy: Math.sin(a) * sp + this.vy * 0.3,
+      ang: sw.ang, spin: (Math.cos(a) >= 0 ? 1 : -1) * 26, stuck: false, back: false, t: 0, hitCD: 0,
+    };
+    this.unplant();
+    Sound.throwBlade();
+    FX.ring(sw.hx, sw.hy, 4, 30, '#bff6ff', 0.2, 2);
+  }
+  recall() {
+    const th = this.thrown;
+    if (!th || th.back) return;
+    th.back = true; th.stuck = false; th.t = 0;
+    Sound.throwBlade();
+    FX.spark(th.x, th.y, 6, null, TAU, 250);
+  }
+  catchSword() {
+    const sw = this.sword, th = this.thrown;
+    this.thrown = null;
+    sw.ang = Math.atan2(th.vy, th.vx) + Math.PI; sw.av = 0;
+    this.placeSword();
+    Sound.catchBlade();
+    FX.ring(sw.hx, sw.hy, 4, 26, '#ffffff', 0.2, 2);
+  }
+  updateThrown(dt, I) {
+    const th = this.thrown, L = G.level, sw = this.sword;
+    th.t += dt; th.hitCD -= dt;
+    const hand = this.rag ? this.pose.hF : this.shoulder();
+    if (th.back) {
+      // fly home to the hand, cutting everything on the way
+      const dx = hand.x - th.x, dy = hand.y - th.y, d = Math.hypot(dx, dy) || 1;
+      const sp = Math.min(1500, 500 + th.t * 2500);
+      th.vx = lerp(th.vx, (dx / d) * sp, Math.min(1, dt * 10)); th.vy = lerp(th.vy, (dy / d) * sp, Math.min(1, dt * 10));
+      th.x += th.vx * dt; th.y += th.vy * dt; th.ang += th.spin * dt;
+      if (d < 34 && !this.rag && !this.dead) { this.catchSword(); return; }
+    } else if (!th.stuck) {
+      th.vy = Math.min(th.vy + 900 * dt, 1400);
+      th.x += th.vx * dt; th.y += th.vy * dt; th.ang += th.spin * dt;
+      const sp = Math.hypot(th.vx, th.vy), dirA = Math.atan2(th.vy, th.vx);
+      const tipX = th.x + Math.cos(dirA) * 22, tipY = th.y + Math.sin(dirA) * 22;
+      if (L.solidAt(tipX, tipY)) { // bites into the stone point-first
+        th.stuck = true; th.ang = dirA + Math.PI; th.vx = th.vy = 0;
+        Sound.plant(); FX.spark(tipX, tipY, 10, dirA + Math.PI, 2, 350); FX.dust(tipX, tipY, 4);
+      } else if (th.y > L.height + 200 || th.x < -200 || th.x > L.width + 200) {
+        th.back = true; th.t = 0; // lost over the edge: it comes home on its own
+      }
+      if (sp < 1) th.stuck = true;
+    } else {
+      // stuck in rock: walk over it to pick it up
+      if (!this.rag && !this.dead && Math.hypot(this.x - th.x, this.y - th.y) < 40) { this.catchSword(); return; }
+    }
+    // the spinning blade is a weapon while it flies
+    const c = Math.cos(th.ang), s = Math.sin(th.ang);
+    sw.hx = th.x - c * 40; sw.hy = th.y - s * 40;
+    sw.bx = th.x - c * 30; sw.by = th.y - s * 30; sw.tx = th.x + c * 40; sw.ty = th.y + s * 40;
+    sw.ang = th.ang;
+    if (!th.stuck && th.hitCD <= 0) {
+      const sp = Math.hypot(th.vx, th.vy);
+      if (this.bladeStrike(sw, Math.max(sp, 900), th.vx / (sp || 1), th.vy / (sp || 1), th.back ? 1 : 2)) {
+        th.hitCD = 0.15;
+        if (!th.back) { th.vx *= -0.3; th.vy = -260; } // bounces off whoever it cut
+      }
     }
   }
 
@@ -426,7 +575,8 @@ class Player {
   }
   netFlags() {
     return (this.rag ? 1 : 0) | (this.dead ? 2 : 0) | (this.dashT > 0 ? 4 : 0) | (this.planted ? 8 : 0) |
-      (this.winded ? 16 : 0) | (this.invuln > 0 && !this.rag ? 32 : 0) | (this.stun > 0 ? 64 : 0);
+      (this.winded ? 16 : 0) | (this.invuln > 0 && !this.rag ? 32 : 0) | (this.stun > 0 ? 64 : 0) |
+      (this.thrown ? 128 : 0) | (this.riposte > 0 ? 256 : 0);
   }
   ragSword() {
     const sw = this.sword, p = this.pose;
@@ -439,7 +589,7 @@ class Player {
   }
   updateRagdoll(dt) {
     const L = G.level;
-    this.rag.update(dt, L); this.rag.toPose(this.pose); this.ragSword();
+    this.rag.update(dt, L); this.rag.toPose(this.pose); if (!this.thrown) this.ragSword();
     Sound.whoosh(0);
     this.ragT -= dt;
     const hip = this.rag.p.hip;
@@ -470,10 +620,15 @@ class Player {
     const run = this.grounded ? clamp(Math.abs(this.vx) / RUN_SPEED, 0, 1.3) : 0;
     standPose(this.getupT > 0 ? this.tmpPose : this.pose, {
       x: this.x, footY: this.y + this.h / 2, facing: this.facing, s: 1, phase: this.phase, run,
-      air: !this.grounded && !this.planted, vy: this.vy, lean: this.lean, crouch: this.planted ? 3 : 0,
-      hF: { x: sw.hx, y: sw.hy },
+      air: !this.grounded && !this.planted, vy: this.vy, lean: this.kickT > 0 ? -0.25 : this.lean, crouch: this.planted ? 3 : 0,
+      hF: this.thrown ? null : { x: sw.hx, y: sw.hy },
     });
     if (this.getupT > 0) lerpPose(this.pose, this.snapPose, this.tmpPose, 1 - this.getupT / 0.22);
+    if (this.kickT > 0) { // front leg snaps out straight
+      const p = this.pose, f = this.facing, ext = Math.sin(clamp(this.kickT / 0.22, 0, 1) * Math.PI);
+      p.fF.x = p.hip.x + f * (12 + 22 * ext); p.fF.y = p.hip.y + 22 - 16 * ext;
+      const k = ik2(p.hip.x, p.hip.y, p.fF.x, p.fF.y, 13, 13, -f); p.kF.x = k.x; p.kF.y = k.y;
+    }
     this.updateBands();
   }
   updateBands() {
@@ -496,7 +651,9 @@ class Player {
     this.band1.draw(ctx, this.style.band, 2.8);
     drawFigure(ctx, this.pose, this.style, this.rag ? sgn(this.pose.head.x - this.pose.hip.x) : this.facing, false);
     drawSlashTrail(ctx, sw.trail);
-    drawKatana(ctx, sw.hx, sw.hy, sw.ang, sw.len, 1, this.style, Math.abs(sw.av) > 26 ? '#bff6ff' : null);
+    if (this.thrown && !this.thrown.stuck) drawSpinBlur(ctx, this.thrown.x, this.thrown.y);
+    const glow = this.riposte > 0 ? '#ffd76a' : Math.abs(sw.av) > 26 ? '#bff6ff' : null;
+    drawKatana(ctx, sw.hx, sw.hy, sw.ang, sw.len, 1, this.style, glow);
     if (this.winded && !this.rag && !this.dead) {
       ctx.fillStyle = '#9fd8ff';
       for (let i = 0; i < 2; i++) {
@@ -508,6 +665,14 @@ class Player {
     ctx.globalAlpha = 1;
     if (this.stun > 0 && !this.rag && !this.dead) drawStars(ctx, this.pose.head.x, this.pose.head.y - 14, G.time);
   }
+}
+
+// faint disc behind a spinning thrown blade
+function drawSpinBlur(ctx, x, y) {
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.fillStyle = 'rgba(200,245,255,0.12)';
+  ctx.beginPath(); ctx.arc(x, y, 40, 0, TAU); ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
 }
 
 // additive afterimage of a fast blade; trail entries are {bx,by,tx,ty,s}

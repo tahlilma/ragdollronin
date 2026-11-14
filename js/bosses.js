@@ -26,6 +26,7 @@ class Boss extends Actor {
     this.phaseSound();
   }
   phaseSound() { Sound.roar(); }
+  kicked(dir) { this.vx += dir * 160; } // bosses barely budge
   die(vx, vy) {
     if (this.dead) return;
     this.dead = true; this.remove = true;
@@ -292,6 +293,15 @@ class Ronin extends Boss {
     super.takeHit(dmg, dx, dy, hx, hy, speed, proj);
   }
   onGuardHit() { if (this.state === 'counter') this.triggerCounter(); }
+  // the answer to the counter stance: you can't cut him, but you can kick him off balance
+  kicked(dir) {
+    if (this.state === 'counter') {
+      this.vx = dir * 380; this.stagT = 1.2; this.setState('stagger');
+      FX.text(this.x, this.y - this.h / 2 - 30, 'GUARD BROKEN!', '#ffd76a', 22);
+      FX.ring(this.x, this.y, 10, 160, '#ffd76a', 0.4, 5);
+      G.slowmo(0.3, 0.3);
+    } else this.vx += dir * 200;
+  }
   resetBlade() { this.blade.dmg = 1; this.blade.parryable = true; this.blade.guardBreak = false; }
   onParried() { this.resetBlade(); this.dashN = 0; this.stagT = 1.1; this.vx = -this.facing * 300; this.setState('stagger'); }
   onBlocked() { this.resetBlade(); this.dashN = 0; this.recT = 0.45; this.setState('recover'); }
@@ -349,6 +359,7 @@ class Oni extends Boss {
   }
   hurtboxes() { return [{ x: this.x - this.w / 2, y: this.y - this.h / 2 + 8, w: this.w, h: this.h - 8 }]; }
   phaseSound() { Sound.roar(); }
+  kicked() { FX.text(this.x, this.y - this.h / 2 - 20, 'HAH! TICKLES.', '#ffb0a0', 16); }
   update(dt) {
     this.base(dt);
     const p = G.player, dx = p.x - this.x, adx = Math.abs(dx), S = this.S;
@@ -555,6 +566,12 @@ class Tengu extends Boss {
     this.setState('intro');
   }
   phaseSound() { Sound.caw(); }
+  // grounded after a dive: a kick knocks him sprawling for a longer punish window
+  kicked(dir) {
+    if (this.state !== 'stuck') return;
+    this.vx = dir * 320; this.vy = -260; this.setState('fall');
+    FX.feathers(this.x, this.y, 6);
+  }
   flyTo(dt, k) {
     this.x = lerp(this.x, this.hx, Math.min(1, dt * k));
     this.y = lerp(this.y, this.hy + Math.sin(G.time * 3) * 8, Math.min(1, dt * k));
@@ -932,6 +949,10 @@ class Kitsune extends Boss {
     this.clones = [];
   }
   die(vx, vy) { if (this.isClone) this.poof(); else super.die(vx, vy); }
+  kicked(dir) {
+    if (this.isClone) { FX.text(this.x, this.y - 50, 'FAKE!', '#7fd8ff', 18); this.poof(); return; }
+    this.vx = dir * 260;
+  }
   onParried() { this.stagT = 1.2; this.setState('stagger'); }
   onBlocked() { this.recT = 0.5; this.setState('recover'); }
   drawTails(ctx) {
