@@ -68,7 +68,17 @@ class Actor {
   }
   hurtboxes() { return [{ x: this.x - this.w / 2, y: this.y - this.h / 2, w: this.w, h: this.h }]; }
   setState(s) { this.state = s; this.st = 0; }
-  base(dt) { this.flash -= dt; this.swordCD -= dt; this.clashCD -= dt; this.st += dt; }
+  base(dt) {
+    this.flash -= dt; this.swordCD -= dt; this.clashCD -= dt; this.st += dt;
+    // an open wound keeps bleeding while they fight on
+    if (this.bleedT > 0 && Settings.gore) {
+      this.bleedT -= dt;
+      if (Math.random() < 30 * dt * Math.min(1, this.bleedT)) {
+        const s = this.s || 1;
+        FX.add({ t: 'blob', x: this.x + this.bleedOx * s, y: this.y + this.bleedOy * s, vx: rand(-40, 40) + this.vx * 0.5, vy: rand(-60, 20), life: 1.5, max: 1.5, col: this.bloodCol, grav: 1400, size: rand(1.2, 2.6) });
+      }
+    }
+  }
   physics(dt, grav = true) {
     if (grav) this.vy = Math.min(this.vy + GRAV * dt, 1100);
     moveBody(this, dt, G.level);
@@ -85,7 +95,8 @@ class Actor {
     if (this.state === 'stagger') dmg += 1;
     this.hp -= dmg; this.flash = 0.12;
     this.lastHit = { hx, hy, dmg, dx, dy }; // decides what gets cut off if this blow kills
-    FX.blood(hx, hy, 5 + dmg * 5, dx, dy, this.bloodCol);
+    FX.blood(hx, hy, 14 + dmg * 10, dx, dy, this.bloodCol);
+    this.bleedT = Math.max(this.bleedT || 0, 2 + dmg); this.bleedOx = clamp((hx - this.x) / (this.s || 1), -10, 10); this.bleedOy = clamp((hy - this.y) / (this.s || 1), -24, 24);
     Sound.slash(dmg);
     if (dmg >= 3) FX.text(hx, hy - 14, 'CRIT!', '#ffe14a', 22);
     else if (dmg === 2) FX.text(hx, hy - 14, 'SLASH!', '#ffffff', 16);
@@ -107,6 +118,8 @@ class Actor {
     Sound.edeath();
     if (Math.random() < 0.55) FX.text(this.x, this.y - 50, pick(BARKS.die), '#fff', 13, { bubble: true, life: 1.4, vy: -30 });
     G.addCorpse(this, vx, vy);
+    const pl = G.player; // killed right in front of you: it hits the lens
+    if (pl && Math.hypot(pl.x - this.x, pl.y - this.y) < 190) FX.screenSplat(2 + Math.floor(Math.random() * 3), this.bloodCol);
     if (this.hatProp) this.hatProp(vx, vy);
   }
   drawShadow(ctx) {
@@ -150,6 +163,11 @@ class Samurai extends Actor {
         break;
       case 'approach':
         this.cool -= dt;
+        // reads an iai being charged nearby and raises his guard (once per charge)
+        if (p.iai && p.iai.phase === 'charge' && p.iai !== this.readIai && adx < 340 && Math.abs(dy) < 120) {
+          this.readIai = p.iai;
+          if (Math.random() < (this.heavy ? 0.9 : 0.55)) { this.setState('guard'); this.guardT = 1.4; FX.text(this.x, this.y - 50, '!', '#ffffff', 20); break; }
+        }
         if (p.dead) { this.setState('idle'); break; }
         if (adx > 74) move = this.facing; else if (adx < 40) move = -this.facing * 0.6;
         if (adx < 100 && this.cool <= 0 && Math.abs(dy) < 90) {
@@ -220,6 +238,16 @@ class Samurai extends Actor {
     });
   }
   onParried() { this.setState('stagger'); this.staggerT = this.heavy ? 0.8 : 1.1; this.vx = -this.facing * 260; }
+  takeHit(dmg, dx, dy, hx, hy, speed, proj) {
+    // a raised guard facing you catches the iai draw-cut, then he counter-attacks
+    const p = G.player;
+    if (!proj && this.state === 'guard' && p.iai && p.iai.phase === 'strike' && sgn(p.x - this.x) === this.facing) {
+      p.iaiBlocked(this);
+      this.comboN = 0; this.glinted = false; this.setState('windup');
+      return;
+    }
+    super.takeHit(dmg, dx, dy, hx, hy, speed, proj);
+  }
   kicked(dir) {
     super.kicked(this.heavy ? dir * 0.55 : dir);
     this.blade.cancelled = true;
@@ -379,7 +407,7 @@ class Corpse {
   }
   update(dt) {
     this.t += dt;
-    if (this.t >= 10) return;
+    if (this.t >= 18) return;
     this.rag.update(dt, G.level); this.rag.toPose(this.pose);
     const p = this.pose, cut = this.rag.cut;
     bleed(p, cut, this.t, this.col, this.s, dt);
@@ -389,18 +417,18 @@ class Corpse {
       this.headAng += this.headSpin * dt;
     }
     // once the body settles it bleeds out into a spreading pool
-    if (Settings.gore && this.t > 0.6 && this.t < 7 && this.rag.speed() < 60) {
+    if (Settings.gore && this.t > 0.6 && this.t < 12 && this.rag.speed() < 60) {
       const gy = G.level.groundBelow(p.hip.x, p.hip.y - 10, 2);
       if (gy !== null && Math.abs(gy - p.hip.y) < 30) {
         if (!this.puddle) this.puddle = FX.pool(p.hip.x, gy + 1, this.col);
-        this.puddle.r = Math.min(this.puddle.r + dt * (cut ? 9 : 4) * this.s, (cut ? 30 : 18) * this.s);
+        this.puddle.r = Math.min(this.puddle.r + dt * (cut ? 12 : 6) * this.s, (cut ? 48 : 28) * this.s);
       }
     }
     if (this.blen) this.wang = fitBladeAngle(G.level, p.hF.x, p.hF.y, Math.atan2(p.hF.y - p.eF.y, p.hF.x - p.eF.x), this.blen);
   }
-  get gone() { return this.t > 12 || this.pose.hip.y > G.level.height + 300; }
+  get gone() { return this.t > 20 || this.pose.hip.y > G.level.height + 300; }
   draw(ctx) {
-    ctx.globalAlpha = this.t > 10 ? Math.max(0, 1 - (this.t - 10) / 2) : 1;
+    ctx.globalAlpha = this.t > 18 ? Math.max(0, 1 - (this.t - 18) / 2) : 1;
     const p = this.pose;
     drawFigure(ctx, p, this.style, sgn(p.head.x - p.hip.x), this.t < 0.08, this.rag.cut, this.headAng);
     if (this.blen) drawKatana(ctx, p.hF.x, p.hF.y, this.wang !== undefined ? this.wang : Math.atan2(p.hF.y - p.eF.y, p.hF.x - p.eF.x), this.blen, this.s, this.style, null, 0.6);

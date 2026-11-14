@@ -572,6 +572,7 @@ function render(rdt) {
     c.fillStyle = eg; c.fillRect(0, 0, vw, vh);
   }
   if (G.slowT > 0) { c.fillStyle = 'rgba(255,255,255,0.04)'; c.fillRect(0, 0, vw, vh); }
+  if (!preview) FX.drawScreen(c, vw, vh, rdt);
   if (G.flash > 0) { c.fillStyle = `rgba(255,255,255,${G.flash})`; c.fillRect(0, 0, vw, vh); }
   G.flash = Math.max(0, G.flash - rdt * 1.8);
   G.zoomKick *= Math.exp(-rdt * 11);

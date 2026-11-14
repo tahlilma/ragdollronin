@@ -2,9 +2,35 @@
 // Particles, floating text, ground decals and loose props (flying hats etc).
 const FX = {
   parts: [], texts: [], decals: [], props: [],
-  clear() { this.parts.length = 0; this.texts.length = 0; this.decals.length = 0; this.props.length = 0; },
+  screen: [], // blood splashed onto the camera (screen space)
+  clear() { this.parts.length = 0; this.texts.length = 0; this.decals.length = 0; this.props.length = 0; this.screen.length = 0; },
+  // a close kill sprays the lens: blotches that slowly run down the screen and fade
+  screenSplat(n, col = '#8e0a18') {
+    if (!Settings.gore) return;
+    for (let i = 0; i < n; i++) {
+      if (this.screen.length > 40) this.screen.shift();
+      const r = rand(8, 46);
+      const dots = [];
+      for (let k = 0; k < 6; k++) dots.push([rand(-1.6, 1.6) * r, rand(-1.6, 1.6) * r, rand(0.1, 0.35) * r]);
+      this.screen.push({ x: rand(0.05, 0.95), y: rand(0.05, 0.75), r, a: rand(0.55, 0.85), run: 0, speed: rand(4, 18), col, dots });
+    }
+  },
+  drawScreen(ctx, vw, vh, dt) {
+    for (const s of this.screen) {
+      s.run += s.speed * dt; s.a -= dt * 0.12;
+      const x = s.x * vw, y = s.y * vh;
+      ctx.globalAlpha = Math.max(0, s.a); ctx.fillStyle = s.col; ctx.strokeStyle = s.col;
+      ctx.beginPath(); ctx.arc(x, y, s.r, 0, TAU); ctx.fill();
+      for (const [dx, dy, rr] of s.dots) { ctx.beginPath(); ctx.arc(x + dx, y + dy, rr, 0, TAU); ctx.fill(); }
+      ctx.lineWidth = s.r * 0.35; ctx.lineCap = 'round'; // the run
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + s.r * 0.15, y + s.r * 0.6 + s.run); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x + s.r * 0.15, y + s.r * 0.6 + s.run, s.r * 0.26, 0, TAU); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    this.screen = this.screen.filter((s) => s.a > 0);
+  },
   add(p) {
-    if (this.parts.length >= 1400) return;
+    if (this.parts.length >= 2200) return;
     if (p.vx === undefined) p.vx = 0;
     if (p.vy === undefined) p.vy = 0;
     if (p.grav === undefined) p.grav = 0;
@@ -25,7 +51,7 @@ const FX = {
     for (let i = 0; i < n; i++) {
       const back = Math.random() < 0.2;
       const a = (back ? base + Math.PI : base) + rand(-0.55, 0.55), s = back ? rand(80, 260) : rand(160, 720);
-      this.add({ t: 'blob', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 120, life: 1.8, max: 1.8, col, grav: 1400, size: rand(1.4, 4.2) });
+      this.add({ t: 'blob', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 120, life: 2, max: 2, col, grav: 1400, size: rand(1.6, 4.8) });
     }
     if (Settings.gore) for (let i = 0; i < n * 0.6; i++) {
       const a = base + rand(-1, 1), s = rand(40, 180);
@@ -34,26 +60,43 @@ const FX = {
   },
   // a pool that spreads under a body; returns the decal so the caller can keep growing it
   pool(x, y, col) {
-    if (this.decals.length > 300) this.decals.shift();
     const d = { x, y, r: 2, col, pool: true };
-    this.decals.push(d);
+    this.addDecal(d);
     return d;
+  },
+  // stains soak together: a drop landing on an existing stain grows it instead of adding another,
+  // and when there are too many, the oldest splats go first (pools are never thrown away)
+  addDecal(d) {
+    if (!d.pool) {
+      for (let i = this.decals.length - 1, n = 0; i >= 0 && n < 90; i--, n++) {
+        const e = this.decals[i];
+        if (e.pool || !!e.wall !== !!d.wall || e.col !== d.col) continue;
+        if (Math.abs(e.x - d.x) < e.r * 1.3 + 2 && Math.abs(e.y - d.y) < (d.wall ? e.r * 1.2 + 2 : 3)) {
+          e.r = Math.min(e.r + d.r * 0.22, d.wall ? 9 : 22);
+          return;
+        }
+      }
+    }
+    this.decals.push(d);
+    if (this.decals.length > 1200) {
+      const i = this.decals.findIndex((e) => !e.pool);
+      this.decals.splice(i < 0 ? 0 : i, 1);
+    }
   },
   // a droplet hits rock: splat on floors, run down walls, splash if it was fast
   splat(p, L) {
     p.life = 0;
-    if (this.decals.length > 300) this.decals.shift();
     const sp = Math.hypot(p.vx, p.vy);
     const floor = !L.solidAt(p.x, p.y - 8) && p.vy > 0;
     if (floor) {
       const y = Math.floor(p.y / T) * T + 1;
-      this.decals.push({ x: p.x, y, r: p.size * (1 + Math.min(sp, 900) / 450) * rand(0.8, 1.3), col: p.col });
+      this.addDecal({ x: p.x, y, r: p.size * (1 + Math.min(sp, 900) / 450) * rand(0.8, 1.3), col: p.col });
       if (sp > 380 && Settings.gore) for (let i = 0; i < 2; i++) {
         this.add({ t: 'blob', x: p.x, y: y - 2, vx: p.vx * 0.3 + rand(-90, 90), vy: -rand(80, 200), life: 0.6, max: 0.6, col: p.col, grav: 1400, size: p.size * 0.45, tiny: true });
       }
     } else {
       // walls and ceilings: a smear, then it runs down the face of the rock
-      this.decals.push({ x: p.x, y: p.y, r: p.size * rand(0.9, 1.4), col: p.col, wall: true });
+      this.addDecal({ x: p.x, y: p.y, r: p.size * rand(0.9, 1.4), col: p.col, wall: true });
       if (Settings.gore && Math.random() < 0.6) this.add({ t: 'drip', x: p.x - sgn(p.vx) * 1.5, y: p.y, y0: p.y, vx: 0, vy: rand(14, 32), grav: 0, life: rand(1.5, 3.5), max: 3.5, col: p.col, size: p.size * 0.5 });
     }
   },

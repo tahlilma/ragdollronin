@@ -244,7 +244,7 @@ const Net = {
       case 'ouch':
         if (G.mode !== 'pvp') break;
         if (m.by === this.id) { FX.text(m.x, m.y - 20, m.dmg >= 3 ? 'CRIT!' : 'HIT!', '#ffe14a', 16); break; } // blood already shown on swing
-        FX.blood(m.x, m.y, 10 + (m.dmg | 0) * 4, rand(-1, 1), -0.5); Sound.slash(m.dmg | 0 || 1);
+        FX.blood(m.x, m.y, 18 + (m.dmg | 0) * 8, rand(-1, 1), -0.5); Sound.slash(m.dmg | 0 || 1);
         break;
       case 'parry':
         if (G.mode !== 'pvp') break;

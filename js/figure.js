@@ -321,14 +321,17 @@ function stumpPoints(p, cut) {
   }
   return out;
 }
-// arterial spray from the wounds: pulses like a heartbeat and weakens over ~2.6 s
+// arterial spray from the wounds: pulses like a heartbeat, gushes hard at first, then trickles out over ~5 s
+const BLEED_TIME = 5;
 function bleed(p, cut, t, col, scale, dt) {
-  if (!cut || !Settings.gore || t > 2.6) return;
-  const fade = 1 - t / 2.6, pulse = 0.3 + 0.7 * Math.max(0, Math.sin(t * 13));
+  if (!cut || !Settings.gore || t > BLEED_TIME) return;
+  const fade = 1 - t / BLEED_TIME, pulse = 0.25 + 0.75 * Math.max(0, Math.sin(t * 12));
   for (const [x, y, dx, dy, k] of stumpPoints(p, cut)) {
-    if (Math.random() > 55 * k * fade * dt * (0.5 + pulse)) continue;
-    const sp = (110 + 420 * pulse) * fade * rand(0.6, 1.2), a = Math.atan2(dy, dx) + rand(-0.3, 0.3);
-    FX.add({ t: 'blob', x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 1.8, max: 1.8, col, grav: 1400, size: rand(1.3, 3) * scale });
+    const n = 110 * k * (0.4 + fade) * dt * (0.5 + pulse);
+    for (let i = 0; i < 3 && Math.random() < n - i; i++) {
+      const sp = (90 + 560 * pulse) * fade * rand(0.55, 1.25), a = Math.atan2(dy, dx) + rand(-0.32, 0.32);
+      FX.add({ t: 'blob', x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 2, max: 2, col, grav: 1400, size: rand(1.4, 3.4) * scale });
+    }
   }
 }
 

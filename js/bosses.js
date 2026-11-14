@@ -31,7 +31,8 @@ class Boss extends Actor {
     if (this.dead) return;
     this.dead = true; this.remove = true;
     G.addCorpse(this, vx * 0.5, Math.min(vy, -500) * 0.6);
-    FX.blood(this.x, this.y, 40, vx || 1, vy || -1, this.bloodCol);
+    FX.blood(this.x, this.y, 70, vx || 1, vy || -1, this.bloodCol);
+    if (Math.hypot(G.player.x - this.x, G.player.y - this.y) < 260) FX.screenSplat(5, this.bloodCol);
     FX.ring(this.x, this.y, 20, 400, '#ffffff', 0.8, 8);
     Sound.gong(); G.slowmo(0.2, 1.6); G.shake(18);
     G.onBossDefeated(this);

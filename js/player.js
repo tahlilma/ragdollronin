@@ -10,7 +10,7 @@ const PIVOT_K = 5200;             // how hard the mouse swings you around a plan
 const NO_INPUT = { down: () => false, take: () => false, mr: false, ml: false };
 // iai balance: a full charge is lethal (4 dmg, dismembers on a kill), but it's slow to charge, costly,
 // on a cooldown, parryable by a fast counter-swing, and a whiff leaves you wide open
-const IAI_KI = 35, IAI_CHARGE = 0.8, IAI_STRIKE = 0.15, IAI_RECOVER = 0.4, IAI_WHIFF = 0.8, IAI_CD = 1.4;
+const IAI_MIN = 0.45, IAI_KI = 35, IAI_CHARGE = 0.8, IAI_STRIKE = 0.15, IAI_RECOVER = 0.4, IAI_WHIFF = 0.8, IAI_CD = 1.4;
 
 // distance from (sx,sy) along `ang` to the first solid tile within [from, to]; to + 1 when clear
 function rayFirstSolid(L, sx, sy, ang, from, to) {
@@ -47,7 +47,7 @@ class Player {
     this.phase = 0; this.lean = 0; this.pogoCD = 0; this.lastVy = 0; this.airT = 0;
     this.pose = newPose(); this.tmpPose = newPose(); this.snapPose = newPose();
     this.ghosts = []; this.ghostT = 0;
-    this.kickT = 0; this.kickCD = 0; this.riposte = 0; this.iai = null; this.iaiCD = 0;
+    this.kickT = 0; this.kickCD = 0; this.riposte = 0; this.iai = null; this.iaiCD = 0; this.noCutT = 0;
     this.style = style || STYLES.player;
     this.sword = { ang: -0.4, av: 0, r: 12, rDes: 12, len: 80, base: 10, hx: x, hy: y, bx: x, by: y, tx: x, ty: y, speed: 0, clangCD: 0, trail: [] };
     this.band1 = new Rope(7, 4.5, x, y - 30); this.band2 = new Rope(6, 4.2, x, y - 30);
@@ -74,7 +74,7 @@ class Player {
     const L = G.level, sw = this.sword;
     const I = G.inputBlocked ? NO_INPUT : Input;
     sw.clangCD -= dt; this.invuln -= dt; this.dashCD -= dt; this.plantCD -= dt; this.pogoCD -= dt; this.getupT -= dt; this.stun -= dt;
-    this.kickCD -= dt; this.kickT -= dt; this.riposte -= dt;
+    this.kickCD -= dt; this.kickT -= dt; this.riposte -= dt; this.noCutT -= dt;
 
     sw.blood = Math.max(0, (sw.blood || 0) - dt * 0.05);
     if (sw.blood > 0.15 && Settings.gore && Math.random() < sw.blood * 0.03) { // drips off the tip
@@ -91,6 +91,10 @@ class Player {
         this.headAng = (this.headAng || 0) + this.headSpin * dt;
       }
       return;
+    }
+    // badly hurt: you leave a trail of blood
+    if (this.hp <= 2 && Settings.gore && Math.random() < (this.hp === 1 ? 26 : 12) * dt) {
+      FX.add({ t: 'blob', x: this.x + rand(-6, 6), y: this.y + rand(-14, 8), vx: rand(-30, 30) + this.vx * 0.4, vy: rand(-40, 10), life: 1.5, max: 1.5, col: '#b3122a', grav: 1400, size: rand(1.2, 2.4) });
     }
     if (this.rag) { this.updateRagdoll(dt); return; }
 
@@ -378,6 +382,7 @@ class Player {
   }
 
   checkSwordHits(g) {
+    if (this.noCutT > 0) return; // re-drawing the blade after an iai: it can't cut yet
     const sw = this.sword;
     const tipSpeed = Math.abs(sw.av) * (sw.r + sw.len * 0.85) + Math.hypot(this.vx, this.vy) * 0.4;
     const d = sgn(sw.av);
@@ -427,7 +432,8 @@ class Player {
       G.shake(2 + dmg * 2);
       // predicted feedback: show the cut now instead of waiting a round trip for the victim's reply
       FX.spark(hx, hy, 6, null, TAU, 300);
-      FX.blood(hx, hy, 8 + dmg * 4, dirx, diry);
+      FX.blood(hx, hy, 18 + dmg * 8, dirx, diry);
+      if (Math.hypot(r.x - this.x, r.y - this.y) < 150 && dmg >= 2) FX.screenSplat(1);
       Sound.slash(dmg);
     }
     return landed;
@@ -496,13 +502,14 @@ class Player {
       z.charge = Math.min(1, z.t / IAI_CHARGE);
       if (z.charge >= 1 && !z.glint) { z.glint = true; FX.glint(this.x + this.facing * 12, this.y + 2, '#ffffff', 36); Sound.shing(); }
       if (!I.ml) {
-        if (z.charge < 0.3) { this.iai = null; return; } // tapped: just put the blade back
+        // tapped / released too early: the blade goes back without cutting (no free snap-back swing)
+        if (z.charge < IAI_MIN) { this.iai = null; this.noCutT = 0.4; this.iaiCD = 0.45; return; }
         this.startIai();
       }
     } else if (z.phase === 'strike') {
       if (z.t >= IAI_STRIKE || this.hitWall) {
         z.phase = 'recover'; z.t = 0; this.vx *= 0.25; this.vy *= 0.25;
-        this.iaiCD = IAI_CD;
+        this.iaiCD = IAI_CD; this.noCutT = (z.hit ? IAI_RECOVER : IAI_WHIFF) + 0.15;
         if (!z.hit) FX.text(this.x, this.y - 54, 'overextended', '#ffb0a0', 13); // a whiff leaves you open longer
       }
     } else if (z.t >= (z.hit ? IAI_RECOVER : IAI_WHIFF)) this.iai = null;
@@ -554,7 +561,8 @@ class Player {
     if (attackerId) this.lastAttacker = { id: attackerId, t: G.time };
     Sound.hurt(); G.shake(10); G.hitstop = Math.max(G.hitstop, 0.09);
     const at = cutAt || { x: this.x, y: this.y - 10 };
-    FX.blood(at.x, at.y, 18, kx, ky);
+    FX.blood(at.x, at.y, 26, kx, ky);
+    FX.screenSplat(1 + dmg);
     const pose0 = copyPose(newPose(), this.pose);
     FX.text(this.x, this.y - 50, pick(['OOF', 'AGH', 'OW', 'ACK', 'HNNG', 'WAH']), '#ff8080', 18);
     this.unplant(); this.dashT = 0; this.stun = 0; this.iai = null;
@@ -584,6 +592,16 @@ class Player {
       const la = this.lastAttacker;
       Net.send({ t: 'died', killer: la && G.time - la.t < 6 ? la.id : 0, cause: src || '' });
     }
+  }
+  // a guarding samurai caught the draw-cut on his blade: you bounce off, staggered and exposed
+  iaiBlocked(e) {
+    if (!this.iai) return;
+    const z = this.iai;
+    this.iai = null; this.iaiCD = IAI_CD; this.noCutT = 0.6;
+    this.stun = 0.6; this.vx = -Math.cos(z.dir || 0) * 320; this.vy = -160;
+    const x = (this.x + e.x) / 2, y = Math.min(this.y, e.y) - 10;
+    Sound.clang(1); FX.spark(x, y, 22, null, TAU, 600); G.shake(8); G.hitstop = Math.max(G.hitstop, 0.06);
+    FX.text(e.x, e.y - 50, 'BLOCKED!', '#ffffff', 18);
   }
   getParried(x, y) {
     if (this.dead || this.rag) return;
