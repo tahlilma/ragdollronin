@@ -645,10 +645,14 @@ function drawHUD(c, vw, vh) {
   c.font = `700 11px ${FONT}`; c.textAlign = 'left'; c.textBaseline = 'top';
   c.fillStyle = 'rgba(255,255,255,0.65)';
   c.fillText(`${p.winded ? 'WINDED' : 'KI'}   DASH${p.airDash > 0 || p.grounded ? '' : ' ✕'}   JUMP ${p.djump > 0 || p.grounded ? '●' : '○'}   VAULT ${'●'.repeat(p.vaults)}${'○'.repeat(3 - p.vaults)}   KICK ${p.kickCD <= 0 ? '●' : '○'}`, 18, 70);
-  if (p.thrown) { c.fillStyle = '#9fe8ff'; c.fillText(p.thrown.stuck ? 'BLADE STUCK: click to recall, or walk over it' : 'BLADE THROWN: click to recall', 18, 84); }
+  const z = p.iai, ch = z && z.phase === 'charge';
+  if (ch) {
+    c.fillStyle = z.charge >= 1 ? '#ffd76a' : '#ffffff'; c.font = `900 13px ${FONT}`;
+    c.fillText(`IAI  ${'█'.repeat(Math.ceil(z.charge * 10))}${z.charge >= 1 ? '  RELEASE!' : ''}`, 18, 84);
+  }
   if (p.riposte > 0) {
     c.fillStyle = '#ffd76a'; c.font = `900 13px ${FONT}`;
-    c.fillText(`RIPOSTE  ${'█'.repeat(Math.ceil(p.riposte * 10))}`, 18, p.thrown ? 98 : 84);
+    c.fillText(`RIPOSTE  ${'█'.repeat(Math.ceil(p.riposte * 10))}`, 18, ch ? 98 : 84);
   }
   if (G.mode === 'pvp') return;
   const def = STAGES[G.stage];
@@ -738,7 +742,7 @@ function drawPvpHUD(c, vw, vh, rdt) {
   }
 }
 
-function p0hint() { const p = G.player; return 88 + (p.thrown ? 14 : 0) + (p.riposte > 0 ? 14 : 0); }
+function p0hint() { const p = G.player; return 88 + (p.iai && p.iai.phase === 'charge' ? 14 : 0) + (p.riposte > 0 ? 14 : 0); }
 
 function drawCursor(c) {
   const x = Input.mx / G.scale, y = Input.my / G.scale;

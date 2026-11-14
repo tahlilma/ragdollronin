@@ -119,8 +119,6 @@ const Sound = (() => {
     },
     kick() { if (!ok('kick', 60)) return; tone(130, 0.18, { f2: 55, vol: 0.45 }); noise(0.1, { ft: 'lowpass', f: 900, f2: 200, vol: 0.4 }); },
     riposte() { tone(880, 0.6, { vol: 0.08, rev: 0.6 }); tone(1320, 0.7, { vol: 0.07, delay: 0.06, rev: 0.6 }); tone(1760, 0.9, { vol: 0.06, delay: 0.12, rev: 0.7 }); noise(0.2, { f: 1500, f2: 5000, vol: 0.2 }); },
-    throwBlade() { if (!ok('throw', 80)) return; noise(0.28, { f: 900, f2: 3200, q: 2, vol: 0.22 }); tone(600, 0.2, { f2: 1200, vol: 0.04, type: 'triangle' }); },
-    catchBlade() { tone(1900, 0.25, { vol: 0.07, rev: 0.3 }); noise(0.05, { ft: 'highpass', f: 3000, vol: 0.2 }); },
     scrape() { if (!ok('scrape', 80)) return; noise(0.13, { f: 2800, f2: 900, q: 2, vol: 0.16 }); tone(1500, 0.07, { vol: 0.025 }); },
     tink() { if (!ok('tink', 40)) return; tone(3200, 0.18, { vol: 0.08, rev: 0.2 }); tone(4700, 0.12, { vol: 0.05 }); noise(0.04, { ft: 'highpass', f: 5000, vol: 0.15 }); },
     slash(d = 1) {

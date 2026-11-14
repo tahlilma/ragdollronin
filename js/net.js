@@ -87,20 +87,7 @@ class Remote {
       q.y = lerp(from.j[2 * i + 1], src.j[2 * i + 1], ex ? 1 : k) + dy;
     }
     this.x = x; this.y = y; this.ang = ang;
-    // a thrown blade flies on its own: draw it where the thrower says it is
-    const ta = src.tw, tb = from.tw;
-    this.tw = ta ? (tb && !ex ? [lerp(tb[0], ta[0], k), lerp(tb[1], ta[1], k), tb[2] + angDiff(tb[2], ta[2]) * k] : ta) : null;
-    if (this.tw) {
-      const tc = Math.cos(this.tw[2]), tsn = Math.sin(this.tw[2]);
-      this.ang = this.tw[2];
-      this.hx = this.tw[0] - tc * 40; this.hy = this.tw[1] - tsn * 40;
-      this.bx = this.tw[0] - tc * 30; this.by = this.tw[1] - tsn * 30; this.tx = this.tw[0] + tc * 40; this.ty = this.tw[1] + tsn * 40;
-      this.trail.length = 0;
-      const h = this.pose.head, f = this.fl & 1 ? 1 : this.f;
-      this.band1.update(h.x - f * 6, h.y - 3, 0); this.band2.update(h.x - f * 6, h.y - 1, 0);
-      this.ready = true;
-      return;
-    }
+    this.ic = src.ic || 0; // iai charge (0..1) while they hold it
     const c = Math.cos(ang), s = Math.sin(ang);
     this.hx = this.pose.hF.x; this.hy = this.pose.hF.y;
     this.bx = this.hx + c * 10; this.by = this.hy + s * 10;
@@ -121,8 +108,8 @@ class Remote {
     this.band1.draw(ctx, st.band, 2.8);
     drawFigure(ctx, p, st, rag ? sgn(p.head.x - p.hip.x) : this.f, false);
     drawSlashTrail(ctx, this.trail);
-    if (this.tw) drawSpinBlur(ctx, this.tw[0], this.tw[1]);
-    drawKatana(ctx, this.hx, this.hy, this.ang, 80, 1, st, this.fl & 256 ? '#ffd76a' : Math.abs(this.av) > 26 ? '#bff6ff' : null);
+    if (this.fl & 128) drawIaiCharge(ctx, this.x, this.y, this.ic);
+    drawKatana(ctx, this.hx, this.hy, this.ang, 80, 1, st, this.fl & 256 || this.ic >= 1 ? '#ffd76a' : Math.abs(this.av) > 26 ? '#bff6ff' : null);
     ctx.globalAlpha = 1;
     if (this.fl & 64) drawStars(ctx, p.head.x, p.head.y - 14, G.time);
     if (this.fl & 2) return;
@@ -280,7 +267,7 @@ const Net = {
   tick(now, p) {
     if (!this.connected || !p) return;
     const sw = p.sword, ls = this.lastSent;
-    const still = ls && !p.rag && !p.dead && Math.abs(p.x - ls.x) < 0.5 && Math.abs(p.y - ls.y) < 0.5 &&
+    const still = ls && !p.rag && !p.dead && !p.iai && Math.abs(p.x - ls.x) < 0.5 && Math.abs(p.y - ls.y) < 0.5 &&
       Math.abs(sw.av) < 0.5 && Math.abs(angDiff(sw.ang, ls.a)) < 0.01 && p.netFlags() === ls.fl && p.hp === ls.hp;
     if (now - this.sendT < (still ? 125 : 33)) return;
     this.sendT = now;
@@ -290,7 +277,7 @@ const Net = {
       t: 's', ts: Math.round(now), x: Math.round(p.x), y: Math.round(p.y), vx: Math.round(p.vx), vy: Math.round(p.vy),
       f: p.facing, hp: p.hp, fl: p.netFlags(), a: Math.round(sw.ang * 1000) / 1000, av: Math.round(sw.av * 10) / 10, j,
     };
-    if (p.thrown) s.tw = [Math.round(p.thrown.x), Math.round(p.thrown.y), Math.round(p.thrown.ang * 100) / 100];
+    if (p.iai && p.iai.phase === 'charge') s.ic = Math.round(p.iai.charge * 10) / 10;
     this.lastSent = s;
     this.send(s);
   },

@@ -64,7 +64,7 @@ class Projectile {
     if (this.owner === 'enemy') {
       const p = G.player;
       if (p.dead) return;
-      if (!p.rag && !p.thrown && this.deflect !== false && this.bladeCD <= 0) {
+      if (!p.rag && p.bladeOut && this.deflect !== false && this.bladeCD <= 0) {
         const sw = p.sword;
         const touch = pointSegDist(this.x, this.y, sw.bx, sw.by, sw.tx, sw.ty) < this.r + 4 ||
           segSeg(this.px, this.py, this.x, this.y, sw.bx, sw.by, sw.tx, sw.ty) >= 0;

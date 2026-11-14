@@ -7,7 +7,8 @@ const SW_ALLOW = 6;               // how deep the tip may bite into stone
 const SW_RMIN = 4, SW_RMAX = 20;  // how far the hand reaches from the shoulder
 const RUN_SPEED = 275, JUMP_V = 720, DJUMP_V = 660, DASH_V = 950, DASH_T = 0.16;
 const PIVOT_K = 5200;             // how hard the mouse swings you around a planted blade
-const NO_INPUT = { down: () => false, take: () => false, mr: false };
+const NO_INPUT = { down: () => false, take: () => false, mr: false, ml: false };
+const IAI_KI = 25, IAI_CHARGE = 0.6, IAI_STRIKE = 0.15, IAI_RECOVER = 0.3;
 
 // distance from (sx,sy) along `ang` to the first solid tile within [from, to]; to + 1 when clear
 function rayFirstSolid(L, sx, sy, ang, from, to) {
@@ -44,7 +45,7 @@ class Player {
     this.phase = 0; this.lean = 0; this.pogoCD = 0; this.lastVy = 0; this.airT = 0;
     this.pose = newPose(); this.tmpPose = newPose(); this.snapPose = newPose();
     this.ghosts = []; this.ghostT = 0;
-    this.kickT = 0; this.kickCD = 0; this.riposte = 0; this.thrown = null;
+    this.kickT = 0; this.kickCD = 0; this.riposte = 0; this.iai = null;
     this.style = style || STYLES.player;
     this.sword = { ang: -0.4, av: 0, r: 12, rDes: 12, len: 80, base: 10, hx: x, hy: y, bx: x, by: y, tx: x, ty: y, speed: 0, clangCD: 0, trail: [] };
     this.band1 = new Rope(7, 4.5, x, y - 30); this.band2 = new Rope(6, 4.2, x, y - 30);
@@ -52,6 +53,7 @@ class Player {
     this.buildPose();
   }
 
+  get bladeOut() { return !(this.iai && this.iai.phase === 'charge'); } // sheathed while charging an iai
   shoulder() { return { x: this.x + this.facing * (1 + this.lean * 8), y: this.y - 15 + Math.abs(this.lean) * 2 }; }
   hurtbox() { return { x: this.x - 9, y: this.y - 24, w: 18, h: 50 }; }
 
@@ -61,7 +63,6 @@ class Player {
   }
   applyGeom(g) { const sw = this.sword; sw.hx = g.hx; sw.hy = g.hy; sw.bx = g.bx; sw.by = g.by; sw.tx = g.tx; sw.ty = g.ty; }
   placeSword() {
-    if (this.thrown) return;
     const sh = this.shoulder();
     this.applyGeom(this.swordGeom(sh.x, sh.y, this.sword.ang, this.sword.r));
   }
@@ -72,21 +73,19 @@ class Player {
     const I = G.inputBlocked ? NO_INPUT : Input;
     sw.clangCD -= dt; this.invuln -= dt; this.dashCD -= dt; this.plantCD -= dt; this.pogoCD -= dt; this.getupT -= dt; this.stun -= dt;
     this.kickCD -= dt; this.kickT -= dt; this.riposte -= dt;
-    if (this.thrown) this.updateThrown(dt, I);
 
     if (this.dead) {
       this.deadT += dt;
-      this.rag.update(dt, L); this.rag.toPose(this.pose); if (!this.thrown) this.ragSword();
+      this.rag.update(dt, L); this.rag.toPose(this.pose); this.ragSword();
       return;
     }
     if (this.rag) { this.updateRagdoll(dt); return; }
 
-    // ---- kick (F) and throw / recall the katana (left click) ----
-    if (I.take('KeyF') && this.kickCD <= 0) this.kick();
-    if (I.take('Mouse0')) {
-      if (this.thrown) this.recall();
-      else if (!this.planted && this.stun <= 0) this.throwSword();
-    }
+    // ---- kick (F) and the iai draw-cut (hold / release left click) ----
+    if (I.take('KeyF') && this.kickCD <= 0 && !(this.iai && this.iai.phase === 'strike')) this.kick();
+    this.updateIai(dt, I);
+    I.take('Mouse0');
+    const striking = this.iai && this.iai.phase === 'strike', charging = this.iai && this.iai.phase === 'charge';
 
     const ix = (I.down('KeyD', 'ArrowRight') ? 1 : 0) - (I.down('KeyA', 'ArrowLeft') ? 1 : 0);
     const iy = (I.down('KeyS', 'ArrowDown') ? 1 : 0) - (I.down('KeyW', 'ArrowUp') ? 1 : 0);
@@ -96,7 +95,7 @@ class Player {
     if (this.dashT <= 0) this.facing = G.mouse.x >= this.x ? 1 : -1;
 
     // ---- plant the blade tip (hold right mouse) ----
-    this.wantPlant = I.mr && !this.planted && this.plantCD <= 0 && !this.thrown;
+    this.wantPlant = I.mr && !this.planted && this.plantCD <= 0 && !this.iai;
     if (this.wantPlant) this.tryPlant();
     if (this.planted && !I.mr) this.unplant();
 
@@ -105,7 +104,11 @@ class Player {
       this.updatePlanted(dt, ix, I);
     } else {
       // ---- dash ----
-      if (this.dashBuf > 0 && this.dashCD <= 0 && (this.grounded || this.airDash > 0)) {
+      if (striking) {
+        // committed to the draw-cut: the dash carries you (no gravity, no steering)
+        this.ghostT -= dt;
+        if (this.ghostT <= 0) { this.ghostT = 0.02; this.ghosts.push({ pose: copyPose(newPose(), this.pose), f: this.facing, a: 1 }); }
+      } else if (this.dashBuf > 0 && this.dashCD <= 0 && !charging && (this.grounded || this.airDash > 0)) {
         let dx = ix, dy = iy;
         if (!dx && !dy) dx = this.facing;
         if (this.grounded && dy > 0) dy = 0;
@@ -116,7 +119,9 @@ class Player {
         Sound.dash(); FX.dust(this.x, this.y + 20, 6);
         FX.ring(this.x, this.y, 6, 34, '#ffffff', 0.25, 2);
       }
-      if (this.dashT > 0) {
+      if (striking) {
+        /* velocity set by startIai */
+      } else if (this.dashT > 0) {
         this.dashT -= dt;
         this.vx = this.dashX * DASH_V; this.vy = this.dashY * DASH_V;
         if (this.dashT <= 0) { this.vx *= 0.45; this.vy *= 0.3; }
@@ -125,7 +130,7 @@ class Player {
       } else {
         // ---- run ----
         const wind = G.wind || 0;
-        const target = ix * RUN_SPEED + wind * (this.grounded ? 1 : 0.8);
+        const target = ix * RUN_SPEED * (charging ? 0.4 : 1) + wind * (this.grounded ? 1 : 0.8);
         let a;
         if (this.grounded) a = ix ? 2600 : 2400;
         else a = ix ? 1500 : 260;
@@ -249,12 +254,7 @@ class Player {
     const mx = G.mouse.x, my = G.mouse.y;
     const target = Math.atan2(my - sh.y, mx - sh.x);
 
-    if (this.thrown) { // empty-handed: catch your breath while the blade flies
-      this.ki = Math.min(100, this.ki + 30 * dt);
-      if (this.winded && this.ki >= 45) this.winded = false;
-      sw.av = 0; sw.trail.length = 0;
-      return;
-    }
+    if (this.iai && this.iai.phase !== 'recover') { this.iaiSword(dt); return; }
 
     if (this.planted) {
       const a = this.planted;
@@ -286,7 +286,7 @@ class Player {
       this.winded = true;
       FX.text(this.x, this.y - 54, 'WINDED!', '#9fd8ff', 16);
     } else if (this.winded && this.ki >= 45) this.winded = false;
-    const maxAV = this.stun > 0 ? 4 : this.winded ? 11 : SW_MAX;
+    const maxAV = this.stun > 0 ? 4 : this.iai ? 6 : this.winded ? 11 : SW_MAX; // sluggish while recovering from an iai
 
     // the blade sweeps freely through stone (full 360s). With right-click held, the tip bites in
     // the moment it meets rock, and you pivot on it.
@@ -371,7 +371,7 @@ class Player {
     if (this.bladeStrike(g, tipSpeed, -Math.sin(sw.ang) * d, Math.cos(sw.ang) * d)) sw.av *= 0.72;
   }
   // a blade segment g {bx,by,tx,ty} moving at `speed` along (dirx, diry) cuts whatever it touches.
-  // Returns true if it landed a hit. Used by the swung blade and the thrown one.
+  // Returns true if it landed a hit. Used by the swung blade and the iai draw-cut.
   bladeStrike(g, speed, dirx, diry, minDmg = 1) {
     let dmg = Math.max(minDmg, speed > 2600 ? 3 : speed > 1500 ? 2 : 1);
     let landed = false;
@@ -458,83 +458,72 @@ class Player {
     if (attackerId) this.lastAttacker = { id: attackerId, t: G.time };
     G.lastHitBy = src;
     Sound.kick(); G.shake(8);
-    this.unplant(); this.stun = 0;
+    this.unplant(); this.stun = 0; this.iai = null;
     this.rag = new Ragdoll(this.pose, clamp(kx * k, -1600, 1600), clamp(ky * k, -1400, 600), rand(-5, 5));
     this.ragT = 0.55;
     return true;
   }
 
-  // ---- throw the katana (left click), click again to call it back ----
-  throwSword() {
-    const sw = this.sword;
-    if (this.ki < 20) { FX.text(this.x, this.y - 54, 'no ki', '#9fd8ff', 13); return; }
-    this.ki -= 20;
-    const sh = this.shoulder();
+  // ---- iai draw-cut: hold left click to sheathe and charge, release to dash-cut toward the cursor ----
+  // Charging is slow and defenceless (no swinging or parrying) and visible to everyone; the cut is a
+  // committed dash that hits for 2, or a guaranteed 3 at full charge, then leaves you briefly exposed.
+  updateIai(dt, I) {
+    const z = this.iai;
+    if (!z) {
+      if (I.ml && !this.planted && this.stun <= 0 && this.dashT <= 0) {
+        if (this.ki < IAI_KI) { if (I.take('Mouse0')) FX.text(this.x, this.y - 54, 'no ki', '#9fd8ff', 13); return; }
+        this.iai = { phase: 'charge', t: 0, charge: 0, glint: false };
+        Sound.swing();
+      }
+      return;
+    }
+    z.t += dt;
+    if (z.phase === 'charge') {
+      z.charge = Math.min(1, z.t / IAI_CHARGE);
+      if (z.charge >= 1 && !z.glint) { z.glint = true; FX.glint(this.x + this.facing * 12, this.y + 2, '#ffffff', 36); Sound.shing(); }
+      if (!I.ml) {
+        if (z.charge < 0.3) { this.iai = null; return; } // tapped: just put the blade back
+        this.startIai();
+      }
+    } else if (z.phase === 'strike') {
+      if (z.t >= IAI_STRIKE || this.hitWall) { z.phase = 'recover'; z.t = 0; this.vx *= 0.25; this.vy *= 0.25; }
+    } else if (z.t >= IAI_RECOVER) this.iai = null;
+  }
+  startIai() {
+    const z = this.iai, sh = this.shoulder();
     const a = Math.atan2(G.mouse.y - sh.y, G.mouse.x - sh.x);
-    const sp = 1250;
-    this.thrown = {
-      x: sw.hx + Math.cos(a) * 40, y: sw.hy + Math.sin(a) * 40,
-      vx: Math.cos(a) * sp + this.vx * 0.5, vy: Math.sin(a) * sp + this.vy * 0.3,
-      ang: sw.ang, spin: (Math.cos(a) >= 0 ? 1 : -1) * 26, stuck: false, back: false, t: 0, hitCD: 0,
-    };
+    z.phase = 'strike'; z.t = 0; z.dir = a; z.side = Math.cos(a) >= 0 ? 1 : -1;
+    z.from = a + z.side * 2.4; z.to = a - z.side * 0.5; // a rising cut from the hip, through the target, up
+    this.facing = z.side;
+    this.ki -= IAI_KI;
+    const sp = 700 + 700 * z.charge;
+    this.vx = Math.cos(a) * sp; this.vy = Math.sin(a) * sp * 0.8;
     this.unplant();
-    Sound.throwBlade();
-    FX.ring(sw.hx, sw.hy, 4, 30, '#bff6ff', 0.2, 2);
+    Sound.dash(); Sound.counterCut();
+    FX.ring(this.x, this.y, 6, 50, z.charge >= 1 ? '#ffd76a' : '#ffffff', 0.25, 3);
   }
-  recall() {
-    const th = this.thrown;
-    if (!th || th.back) return;
-    th.back = true; th.stuck = false; th.t = 0;
-    Sound.throwBlade();
-    FX.spark(th.x, th.y, 6, null, TAU, 250);
-  }
-  catchSword() {
-    const sw = this.sword, th = this.thrown;
-    this.thrown = null;
-    sw.ang = Math.atan2(th.vy, th.vx) + Math.PI; sw.av = 0;
-    this.placeSword();
-    Sound.catchBlade();
-    FX.ring(sw.hx, sw.hy, 4, 26, '#ffffff', 0.2, 2);
-  }
-  updateThrown(dt, I) {
-    const th = this.thrown, L = G.level, sw = this.sword;
-    th.t += dt; th.hitCD -= dt;
-    const hand = this.rag ? this.pose.hF : this.shoulder();
-    if (th.back) {
-      // fly home to the hand, cutting everything on the way
-      const dx = hand.x - th.x, dy = hand.y - th.y, d = Math.hypot(dx, dy) || 1;
-      const sp = Math.min(1500, 500 + th.t * 2500);
-      th.vx = lerp(th.vx, (dx / d) * sp, Math.min(1, dt * 10)); th.vy = lerp(th.vy, (dy / d) * sp, Math.min(1, dt * 10));
-      th.x += th.vx * dt; th.y += th.vy * dt; th.ang += th.spin * dt;
-      if (d < 34 && !this.rag && !this.dead) { this.catchSword(); return; }
-    } else if (!th.stuck) {
-      th.vy = Math.min(th.vy + 900 * dt, 1400);
-      th.x += th.vx * dt; th.y += th.vy * dt; th.ang += th.spin * dt;
-      const sp = Math.hypot(th.vx, th.vy), dirA = Math.atan2(th.vy, th.vx);
-      const tipX = th.x + Math.cos(dirA) * 22, tipY = th.y + Math.sin(dirA) * 22;
-      if (L.solidAt(tipX, tipY)) { // bites into the stone point-first
-        th.stuck = true; th.ang = dirA + Math.PI; th.vx = th.vy = 0;
-        Sound.plant(); FX.spark(tipX, tipY, 10, dirA + Math.PI, 2, 350); FX.dust(tipX, tipY, 4);
-      } else if (th.y > L.height + 200 || th.x < -200 || th.x > L.width + 200) {
-        th.back = true; th.t = 0; // lost over the edge: it comes home on its own
-      }
-      if (sp < 1) th.stuck = true;
-    } else {
-      // stuck in rock: walk over it to pick it up
-      if (!this.rag && !this.dead && Math.hypot(this.x - th.x, this.y - th.y) < 40) { this.catchSword(); return; }
+  iaiSword(dt) { // the blade during the iai, replacing the normal mouse-driven swing
+    const z = this.iai, sw = this.sword, sh = this.shoulder();
+    if (z.phase === 'charge') {
+      // drawn back to the hip, ready
+      const want = this.facing > 0 ? 2.5 : Math.PI - 2.5;
+      sw.ang += angDiff(sw.ang, want) * Math.min(1, dt * 18); sw.av = 0; sw.r = SW_RMIN + 2; sw.rDes = sw.r;
+      this.applyGeom(this.swordGeom(sh.x, sh.y, sw.ang, sw.r));
+      sw.trail.length = 0;
+      return;
     }
-    // the spinning blade is a weapon while it flies
-    const c = Math.cos(th.ang), s = Math.sin(th.ang);
-    sw.hx = th.x - c * 40; sw.hy = th.y - s * 40;
-    sw.bx = th.x - c * 30; sw.by = th.y - s * 30; sw.tx = th.x + c * 40; sw.ty = th.y + s * 40;
-    sw.ang = th.ang;
-    if (!th.stuck && th.hitCD <= 0) {
-      const sp = Math.hypot(th.vx, th.vy);
-      if (this.bladeStrike(sw, Math.max(sp, 900), th.vx / (sp || 1), th.vy / (sp || 1), th.back ? 1 : 2)) {
-        th.hitCD = 0.15;
-        if (!th.back) { th.vx *= -0.3; th.vy = -260; } // bounces off whoever it cut
-      }
-    }
+    const k = clamp(z.t / IAI_STRIKE, 0, 1);
+    const prev = sw.ang;
+    sw.ang = lerp(z.from, z.to, easeOut(k)); sw.r = SW_RMAX; sw.rDes = SW_RMAX;
+    sw.av = angDiff(prev, sw.ang) / dt;
+    const g = this.swordGeom(sh.x, sh.y, sw.ang, sw.r);
+    this.applyGeom(g);
+    this.bladeBlocked(g, this.swordGeom(sh.x, sh.y, prev, sw.r)); // enemy blades in the way get parried
+    const c = Math.cos(z.dir), s = Math.sin(z.dir);
+    this.bladeStrike(g, 2600, c, s, z.charge >= 1 ? 3 : 2);
+    sw.trail.push({ bx: g.bx, by: g.by, tx: g.tx, ty: g.ty, t: G.time, s: 34 });
+    while (sw.trail.length && G.time - sw.trail[0].t > 0.12) sw.trail.shift();
+    Sound.whoosh(2600);
   }
 
   // ---- damage / ragdoll ----
@@ -546,7 +535,7 @@ class Player {
     Sound.hurt(); G.shake(10); G.hitstop = Math.max(G.hitstop, 0.09);
     FX.blood(this.x, this.y - 10, 14, kx, ky);
     FX.text(this.x, this.y - 50, pick(['OOF', 'AGH', 'OW', 'ACK', 'HNNG', 'WAH']), '#ff8080', 18);
-    this.unplant(); this.dashT = 0; this.stun = 0;
+    this.unplant(); this.dashT = 0; this.stun = 0; this.iai = null;
     this.rag = new Ragdoll(this.pose, this.vx * 0.3 + kx, this.vy * 0.2 + ky, rand(-6, 6));
     this.ragT = 0.65 + dmg * 0.2;
     if (this.hp <= 0) { this.hp = 0; this.die(src); }
@@ -576,7 +565,7 @@ class Player {
   netFlags() {
     return (this.rag ? 1 : 0) | (this.dead ? 2 : 0) | (this.dashT > 0 ? 4 : 0) | (this.planted ? 8 : 0) |
       (this.winded ? 16 : 0) | (this.invuln > 0 && !this.rag ? 32 : 0) | (this.stun > 0 ? 64 : 0) |
-      (this.thrown ? 128 : 0) | (this.riposte > 0 ? 256 : 0);
+      (this.iai && this.iai.phase === 'charge' ? 128 : 0) | (this.riposte > 0 ? 256 : 0);
   }
   ragSword() {
     const sw = this.sword, p = this.pose;
@@ -589,7 +578,7 @@ class Player {
   }
   updateRagdoll(dt) {
     const L = G.level;
-    this.rag.update(dt, L); this.rag.toPose(this.pose); if (!this.thrown) this.ragSword();
+    this.rag.update(dt, L); this.rag.toPose(this.pose); this.ragSword();
     Sound.whoosh(0);
     this.ragT -= dt;
     const hip = this.rag.p.hip;
@@ -620,8 +609,8 @@ class Player {
     const run = this.grounded ? clamp(Math.abs(this.vx) / RUN_SPEED, 0, 1.3) : 0;
     standPose(this.getupT > 0 ? this.tmpPose : this.pose, {
       x: this.x, footY: this.y + this.h / 2, facing: this.facing, s: 1, phase: this.phase, run,
-      air: !this.grounded && !this.planted, vy: this.vy, lean: this.kickT > 0 ? -0.25 : this.lean, crouch: this.planted ? 3 : 0,
-      hF: this.thrown ? null : { x: sw.hx, y: sw.hy },
+      air: !this.grounded && !this.planted, vy: this.vy, lean: this.kickT > 0 ? -0.25 : this.lean, crouch: this.planted ? 3 : this.iai && this.iai.phase === 'charge' ? 8 : 0,
+      hF: { x: sw.hx, y: sw.hy },
     });
     if (this.getupT > 0) lerpPose(this.pose, this.snapPose, this.tmpPose, 1 - this.getupT / 0.22);
     if (this.kickT > 0) { // front leg snaps out straight
@@ -651,8 +640,9 @@ class Player {
     this.band1.draw(ctx, this.style.band, 2.8);
     drawFigure(ctx, this.pose, this.style, this.rag ? sgn(this.pose.head.x - this.pose.hip.x) : this.facing, false);
     drawSlashTrail(ctx, sw.trail);
-    if (this.thrown && !this.thrown.stuck) drawSpinBlur(ctx, this.thrown.x, this.thrown.y);
-    const glow = this.riposte > 0 ? '#ffd76a' : Math.abs(sw.av) > 26 ? '#bff6ff' : null;
+    const z = this.iai;
+    if (z && z.phase === 'charge' && !this.rag) drawIaiCharge(ctx, this.x, this.y, z.charge);
+    const glow = this.riposte > 0 || (z && z.charge >= 1) ? '#ffd76a' : Math.abs(sw.av) > 26 ? '#bff6ff' : null;
     drawKatana(ctx, sw.hx, sw.hy, sw.ang, sw.len, 1, this.style, glow);
     if (this.winded && !this.rag && !this.dead) {
       ctx.fillStyle = '#9fd8ff';
@@ -667,12 +657,14 @@ class Player {
   }
 }
 
-// faint disc behind a spinning thrown blade
-function drawSpinBlur(ctx, x, y) {
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.fillStyle = 'rgba(200,245,255,0.12)';
-  ctx.beginPath(); ctx.arc(x, y, 40, 0, TAU); ctx.fill();
-  ctx.globalCompositeOperation = 'source-over';
+// gathering-energy ring while an iai charges (shared with rivals' view in duels)
+function drawIaiCharge(ctx, x, y, k) {
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  const full = k >= 1, a = full ? 0.5 + 0.3 * Math.sin(G.time * 30) : 0.25 + k * 0.25;
+  ctx.strokeStyle = full ? `rgba(255,215,106,${a})` : `rgba(220,240,255,${a})`;
+  ctx.lineWidth = full ? 3 : 2;
+  ctx.beginPath(); ctx.arc(x, y, 46 - k * 16, -Math.PI / 2, -Math.PI / 2 + TAU * k); ctx.stroke();
+  ctx.restore();
 }
 
 // additive afterimage of a fast blade; trail entries are {bx,by,tx,ty,s}

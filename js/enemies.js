@@ -34,7 +34,7 @@ function bladeAttack(e, b) {
   const p = G.player;
   if (p.dead) return;
   const mx0 = (b.ax + b.pax) / 2, my0 = (b.ay + b.pay) / 2, mx1 = (b.bx + b.pbx) / 2, my1 = (b.by + b.pby) / 2;
-  if (!p.rag && !b.hitDone && !p.thrown) {
+  if (!p.rag && !b.hitDone && p.bladeOut) {
     const sw = p.sword;
     const rr = b.r + 3;
     if (segSegDist(sw.bx, sw.by, sw.tx, sw.ty, b.ax, b.ay, b.bx, b.by) < rr || segSegDist(sw.bx, sw.by, sw.tx, sw.ty, mx0, my0, mx1, my1) < rr) {
