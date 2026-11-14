@@ -103,7 +103,8 @@ class Remote {
     const c = Math.cos(ang), s = Math.sin(ang);
     this.hx = this.pose.hF.x; this.hy = this.pose.hF.y;
     this.bx = this.hx + c * 10; this.by = this.hy + s * 10;
-    this.tx = this.hx + c * 80; this.ty = this.hy + s * 80;
+    this.bk = src.bk || 0; this.blen = this.bk >= 3 ? 46 : 80; // a snapped blade is short
+    this.tx = this.hx + c * this.blen; this.ty = this.hy + s * this.blen;
     this.trail.push({ bx: this.bx, by: this.by, tx: this.tx, ty: this.ty, t: now, s: Math.abs(this.av) });
     while (this.trail.length && now - this.trail[0].t > 85) this.trail.shift();
     if (!this.ready) { this.band1.reset(this.pose.head.x, this.pose.head.y); this.band2.reset(this.pose.head.x, this.pose.head.y); }
@@ -121,7 +122,8 @@ class Remote {
     drawFigure(ctx, p, st, rag ? sgn(p.head.x - p.hip.x) : this.f, false, this.cm || 0, this.cm ? this.headAng : null);
     drawSlashTrail(ctx, this.trail);
     if (this.fl & 128) drawIaiCharge(ctx, this.x, this.y, this.ic);
-    drawKatana(ctx, this.hx, this.hy, this.ang, 80, 1, st, this.fl & 256 || this.ic >= 1 ? '#ffd76a' : Math.abs(this.av) > 26 ? '#bff6ff' : null);
+    drawKatana(ctx, this.hx, this.hy, this.ang, this.blen || 80, 1, st, this.fl & 256 || this.ic >= 1 ? '#ffd76a' : this.fl & 512 ? '#ff3030' : Math.abs(this.av) > 26 ? '#bff6ff' : null);
+    drawCracks(ctx, this.hx, this.hy, this.ang, this.blen || 80, this.bk || 0, (this.bk || 0) >= 3, 1);
     ctx.globalAlpha = 1;
     if (this.fl & 64) drawStars(ctx, p.head.x, p.head.y - 14, G.time);
     if (this.fl & 2) return;
@@ -248,7 +250,7 @@ const Net = {
         break;
       case 'parry':
         if (G.mode !== 'pvp') break;
-        if (m.to === this.id) G.player.getParried(m.x, m.y);
+        if (m.to === this.id) G.player.getParried(m.x, m.y, !!m.pf);
         else { FX.parryBurst(m.x, m.y, 0.6); Sound.clang(0.8); }
         break;
       case 'kill': this.setRoster(m.roster); this.onKill(m); break;
@@ -270,6 +272,7 @@ const Net = {
     if (k) this.addFeed(`${k}  ⚔  ${v}`, col);
     else this.addFeed(`${v} ${m.cause === 'spikes' ? 'found the spikes' : 'fell into the abyss'}`, col);
     if (m.killer === this.id && G.player) {
+      G.player.onKill(null);
       FX.text(G.player.x, G.player.y - 72, pick(['KILL!', 'SLAIN!', 'IPPON!']), '#ffe14a', 26);
       Sound.shing();
     }
@@ -291,6 +294,7 @@ const Net = {
     };
     if (p.iai && p.iai.phase === 'charge') s.ic = Math.round(p.iai.charge * 10) / 10;
     if (p.rag && p.rag.cut) s.cm = p.rag.cut;
+    if (p.cracks) s.bk = p.cracks;
     this.lastSent = s;
     this.send(s);
   },
@@ -307,11 +311,13 @@ const Net = {
     const mine = Math.abs(p.sword.av), theirs = Math.abs(r.av);
     const cx = (g.bx + g.tx + r.bx + r.tx) / 4, cy = (g.by + g.ty + r.by + r.ty) / 4;
     if (mine > 9 && mine > theirs * 1.15 + 2 && p.stun <= 0) {
-      this.send({ t: 'parry', to: r.id, x: Math.round(cx), y: Math.round(cy) });
+      const perfect = mine > theirs * 2 + 6; // a far faster blade: a perfect parry cracks theirs
+      this.send({ t: 'parry', to: r.id, x: Math.round(cx), y: Math.round(cy), pf: perfect ? 1 : 0 });
       FX.parryBurst(cx, cy, 1); Sound.parry(); G.shake(8);
       G.hitstop = Math.max(G.hitstop, 0.05);
       FX.text(cx, cy - 30, 'PARRY!', '#fff6a0', 22);
-      p.gainRiposte(mine > theirs * 2 + 6); // a far faster blade counts as a perfect parry
+      p.gainRiposte(perfect);
+      if (perfect) { p.addLust(0.5); FX.text(cx, cy - 52, 'CRACK!', '#ffe9a8', 16); }
     } else if (mine > 3) {
       Sound.clang(clamp(mine / 30, 0.25, 0.8)); FX.spark(cx, cy, 8, null, TAU, 380);
     }

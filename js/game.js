@@ -37,9 +37,10 @@ const G = {
         sw.av *= -0.5;
         if (e.onParried) e.onParried(b);
         // caught in the first ~70 ms of the swing: a perfect parry staggers longer
-        const perfect = (b.t || 0) < 0.07;
+        const perfect = (b.t || 0) < 0.09;
         if (perfect) { if (e.staggerT) e.staggerT *= 1.6; if (e.stagT) e.stagT *= 1.6; }
         p.gainRiposte(perfect);
+        if (perfect) { p.addLust(0.5); if (e.crackWeapon) e.crackWeapon(); } // perfect parries crack their blade
         return;
       }
       if (b.guardBreak) {
@@ -544,6 +545,7 @@ function render(rdt) {
   for (const co of G.corpses) co.draw(c);
   for (const pr of G.projectiles) if (pr.type === 'marker' || pr.type === 'tornado') pr.draw(c);
   for (const e of G.enemies) if (e.x > x0 - 300 && e.x < x1 + 300) e.draw(c);
+  for (const e of G.enemies) if (e.execT > 0 && !e.dead) drawExecuteMark(c, e);
   if (G.mode === 'pvp') for (const r of Net.remotes.values()) r.draw(c);
   const preview = G.state === 'title';
   if (!preview) G.player.draw(c);
@@ -651,6 +653,16 @@ function drawHUD(c, vw, vh) {
   c.font = `700 11px ${FONT}`; c.textAlign = 'left'; c.textBaseline = 'top';
   c.fillStyle = 'rgba(255,255,255,0.65)';
   c.fillText(`${p.winded ? 'WINDED' : 'KI'}   DASH${p.airDash > 0 || p.grounded ? '' : ' ✕'}   JUMP ${p.djump > 0 || p.grounded ? '●' : '○'}   VAULT ${'●'.repeat(p.vaults)}${'○'.repeat(3 - p.vaults)}   KICK ${p.kickCD <= 0 ? '●' : '○'}`, 18, 70);
+  // bloodlust: 5 blood pips; 3+ = +1 damage, 5 = frenzy (kills heal)
+  for (let i = 0; i < 5; i++) {
+    const fill = clamp(p.lust - i, 0, 1), x = 190 + i * 16, y = 32;
+    c.fillStyle = 'rgba(255,255,255,0.12)'; c.beginPath(); c.arc(x, y, 5.5, 0, TAU); c.fill();
+    if (fill > 0) { c.fillStyle = p.lust >= 5 ? '#ff2a2a' : p.lust >= 3 ? '#e5323d' : '#8e1a24'; c.beginPath(); c.arc(x, y, 5.5 * fill, 0, TAU); c.fill(); }
+  }
+  c.font = `800 10px ${FONT}`; c.textAlign = 'left'; c.textBaseline = 'top';
+  c.fillStyle = p.lust >= 3 ? '#ff5a5a' : 'rgba(255,255,255,0.45)';
+  c.fillText(p.lust >= 5 ? 'FRENZY' : p.lust >= 3 ? 'BLOODLUST +1' : 'BLOODLUST', 182, 42);
+  if (p.cracks) { c.fillStyle = p.broken ? '#ff6a6a' : '#ffe9a8'; c.fillText(p.broken ? 'BLADE BROKEN' : `BLADE CRACKED ${p.cracks}/3`, 182, 54); }
   const z = p.iai, ch = z && z.phase === 'charge';
   if (ch) {
     c.fillStyle = z.charge >= 1 ? '#ffd76a' : '#ffffff'; c.font = `900 13px ${FONT}`;
@@ -746,6 +758,23 @@ function drawPvpHUD(c, vw, vh, rdt) {
     c.font = `700 15px ${FONT}`; c.fillStyle = '#ffffff';
     c.fillText(`Next duel in ${Math.max(1, Math.ceil(Net.over.t))}…`, vw / 2, vh * 0.2 + 100);
   }
+}
+
+// a disarmed foe: a pulsing red seal over them while they can be executed
+function drawExecuteMark(c, e) {
+  const pulse = 0.5 + 0.5 * Math.sin(G.time * 18);
+  const x = e.x, y = e.y - e.h / 2 - 28 * (e.s || 1);
+  c.save();
+  c.shadowColor = '#ff2a2a'; c.shadowBlur = 16;
+  c.fillStyle = `rgba(120,0,10,${0.75 + pulse * 0.2})`; c.strokeStyle = '#ff5a5a'; c.lineWidth = 2;
+  c.beginPath(); c.arc(x, y, 15 + pulse * 3, 0, TAU); c.fill(); c.stroke();
+  c.shadowBlur = 0;
+  c.fillStyle = '#ffffff'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.font = `800 18px ${SERIF}`; c.fillText('処', x, y + 1);
+  c.font = `900 11px ${FONT}`; c.fillStyle = '#ff6a6a';
+  c.fillText('EXECUTE', x, y + 26);
+  c.beginPath(); c.arc(x, y, 22, -Math.PI / 2, -Math.PI / 2 + TAU * clamp(e.execT / 2.2, 0, 1)); c.strokeStyle = '#ffffff'; c.lineWidth = 2; c.stroke();
+  c.restore();
 }
 
 function p0hint() { const p = G.player; return 88 + (p.iai && p.iai.phase === 'charge' ? 14 : 0) + (p.riposte > 0 ? 14 : 0); }

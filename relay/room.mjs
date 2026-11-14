@@ -42,7 +42,7 @@ export class DuelRoom {
         break;
       }
       case 'ouch': this.broadcast({ t: 'ouch', id: p.id, by: m.by | 0, dmg: m.dmg | 0, x: num(m.x), y: num(m.y) }, p.id); break;
-      case 'parry': this.broadcast({ t: 'parry', from: p.id, to: m.to | 0, x: num(m.x), y: num(m.y) }, p.id); break;
+      case 'parry': this.broadcast({ t: 'parry', from: p.id, to: m.to | 0, x: num(m.x), y: num(m.y), pf: m.pf ? 1 : 0 }, p.id); break;
       case 'say': this.broadcast({ t: 'say', id: p.id, i: m.i | 0 }, p.id); break;
       case 'died': this.died(p, m); break;
     }

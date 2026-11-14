@@ -65,11 +65,39 @@ class Actor {
     this.hittable = true; this.blades = []; this.state = 'idle'; this.st = 0;
     this.pose = newPose(); this.phase = 0; this.isBoss = false; this.name = 'an enemy';
     this.bloodCol = '#b3122a'; this.s = 1;
+    this.cracks = 0; this.breakAt = 3; this.broken = false; this.execT = 0;
   }
   hurtboxes() { return [{ x: this.x - this.w / 2, y: this.y - this.h / 2, w: this.w, h: this.h }]; }
   setState(s) { this.state = s; this.st = 0; }
+  // a perfect parry cracks the blade; enough cracks and it shatters, leaving them open to execution
+  crackWeapon() {
+    if (this.broken || !this.blade || !this.bladeLen) return;
+    this.cracks++;
+    const b = this.blade, tx = b.bx, ty = b.by;
+    FX.spark(tx, ty, 18, null, TAU, 520, '#fff6c8');
+    if (this.cracks < this.breakAt) {
+      Sound.crack();
+      FX.text(tx, ty - 18, `CRACK ${this.cracks}/${this.breakAt}`, '#ffe9a8', 15);
+      return;
+    }
+    this.broken = true;
+    const lost = this.bladeLen * 0.45;
+    this.bladeLen -= lost;
+    b.dmg = Math.max(1, b.dmg - 1);
+    Sound.shatter(); G.shake(10); G.hitstop = Math.max(G.hitstop, 0.08); G.slowmo(0.3, 0.5);
+    FX.parryBurst(tx, ty, 0.7);
+    FX.text(this.x, this.y - this.h / 2 - 36, 'SHATTERED!', '#ffffff', 26);
+    // the snapped-off half spins away
+    const ang = Math.atan2(b.by - b.ay, b.bx - b.ax), st = this.style;
+    FX.prop({
+      x: tx, y: ty, vx: rand(-260, 260), vy: rand(-520, -300), vr: rand(-22, 22), life: 8,
+      draw(ctx) { drawKatana(ctx, -lost - 8, 0, 0, lost + 8, 1, st, null); },
+    });
+    if (this.onShatter) this.onShatter();
+    this.execT = 2.2; // stunned and defenceless: the next blow executes
+  }
   base(dt) {
-    this.flash -= dt; this.swordCD -= dt; this.clashCD -= dt; this.st += dt;
+    this.flash -= dt; this.swordCD -= dt; this.clashCD -= dt; this.st += dt; this.execT -= dt;
     // an open wound keeps bleeding while they fight on
     if (this.bleedT > 0 && Settings.gore) {
       this.bleedT -= dt;
@@ -92,9 +120,17 @@ class Actor {
   }
   takeHit(dmg, dx, dy, hx, hy, speed, proj) {
     if (this.dead) return;
-    if (this.state === 'stagger') dmg += 1;
+    let force = null;
+    if (this.execT > 0 && !proj) { // EXECUTION: a disarmed foe dies to the next blow (bosses take a huge hit)
+      this.execT = 0;
+      dmg = this.isBoss ? Math.max(dmg, 8) : this.hp;
+      force = Math.random() < 0.7 ? 'head' : 'waist';
+      FX.text(this.x, this.y - this.h / 2 - 40, 'EXECUTED!', '#ff4a4a', 30, { font: 'mincho' });
+      Sound.riposte(); G.slowmo(0.2, 0.6); G.flash = Math.max(G.flash, 0.25); G.shake(14);
+      FX.blood(hx, hy, 60, dx, dy, this.bloodCol);
+    } else if (this.state === 'stagger') dmg += 1;
     this.hp -= dmg; this.flash = 0.12;
-    this.lastHit = { hx, hy, dmg, dx, dy }; // decides what gets cut off if this blow kills
+    this.lastHit = { hx, hy, dmg, dx, dy, force }; // decides what gets cut off if this blow kills
     FX.blood(hx, hy, 14 + dmg * 10, dx, dy, this.bloodCol);
     this.bleedT = Math.max(this.bleedT || 0, 2 + dmg); this.bleedOx = clamp((hx - this.x) / (this.s || 1), -10, 10); this.bleedOy = clamp((hy - this.y) / (this.s || 1), -24, 24);
     Sound.slash(dmg);
@@ -115,6 +151,7 @@ class Actor {
     if (this.dead) return;
     this.dead = true; this.remove = true;
     G.kills++;
+    if (G.player) G.player.onKill(this);
     Sound.edeath();
     if (Math.random() < 0.55) FX.text(this.x, this.y - 50, pick(BARKS.die), '#fff', 13, { bubble: true, life: 1.4, vy: -30 });
     G.addCorpse(this, vx, vy);
@@ -145,6 +182,7 @@ class Samurai extends Actor {
     this.style = this.heavy ? STYLES.heavy : STYLES.samurai;
     this.blade = mkBlade({ r: 3, dmg: this.heavy ? 2 : 1 }); this.blades = [this.blade];
     this.bladeLen = this.heavy ? 70 : 60;
+    this.breakAt = this.heavy ? 4 : 3;
     this.la = -0.7; this.cool = rand(0.2, 0.8); this.comboN = 0; this.guardT = 0; this.staggerT = 0;
     this.glinted = false;
   }
@@ -218,7 +256,7 @@ class Samurai extends Actor {
     }
     if (this.state !== 'slash') this.vx = approach(this.vx, move * this.speed, (this.grounded ? 1400 : 300) * dt);
     this.physics(dt);
-    if (this.y > G.level.height + 150) { this.dead = true; this.remove = true; G.kills++; return; }
+    if (this.y > G.level.height + 150) { this.dead = true; this.remove = true; G.kills++; if (G.player) G.player.onKill(this, true); return; }
     this.phase += Math.abs(this.vx) * dt * 0.05;
     // weapon + pose
     const sh = this.shoulder();
@@ -238,6 +276,7 @@ class Samurai extends Actor {
     });
   }
   onParried() { this.setState('stagger'); this.staggerT = this.heavy ? 0.8 : 1.1; this.vx = -this.facing * 260; }
+  onShatter() { this.setState('stagger'); this.staggerT = 2.2; FX.text(this.x, this.y - 70, pick(['My blade!', 'No...', 'Mercy!']), '#fff', 13, { bubble: true, life: 1.4, vy: -20 }); }
   takeHit(dmg, dx, dy, hx, hy, speed, proj) {
     // a raised guard facing you catches the iai draw-cut, then he counter-attacks
     const p = G.player;
@@ -274,6 +313,7 @@ class Samurai extends Actor {
     drawFigure(ctx, this.pose, this.style, this.facing, this.flash > 0);
     const glow = this.state === 'windup' && this.st > this.windupT * 0.4 ? '#ffdada' : null;
     drawKatana(ctx, this.hand.x, this.hand.y, this.wang, this.bladeLen, 1, this.style, glow);
+    drawCracks(ctx, this.hand.x, this.hand.y, this.wang, this.bladeLen, this.cracks, this.broken, 1);
     if (this.state === 'stagger') drawStars(ctx, this.pose.head.x, this.pose.head.y - 14, G.time);
     if (this.hp < this.maxHp) {
       ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(this.x - 16, this.y - 46, 32, 4);
@@ -331,7 +371,7 @@ class Archer extends Actor {
     }
     this.vx = approach(this.vx, move * 170, (this.grounded ? 1400 : 300) * dt);
     this.physics(dt);
-    if (this.y > G.level.height + 150) { this.dead = true; this.remove = true; G.kills++; return; }
+    if (this.y > G.level.height + 150) { this.dead = true; this.remove = true; G.kills++; if (G.player) G.player.onKill(this, true); return; }
     this.phase += Math.abs(this.vx) * dt * 0.05;
     const sh = this.shoulder();
     const a = this.state === 'draw' ? this.aim : (this.facing > 0 ? 0.9 : Math.PI - 0.9);
@@ -396,7 +436,7 @@ class Corpse {
     // the killing blow decides what comes off
     const h = e.lastHit;
     if (h) {
-      const part = pickSever(e.pose, h.hx, h.hy, h.dmg, false);
+      const part = h.force && Settings.gore ? h.force : pickSever(e.pose, h.hx, h.hy, h.dmg, false);
       if (part && this.rag.sever(part, h.dx * 420, -280 + h.dy * 220)) {
         FX.blood(h.hx, h.hy, 26, h.dx, h.dy, this.col);
         if (part === 'head') FX.text(e.x, e.y - 60, pick(['DECAPITATED!', 'HEADS UP!', 'OFF WITH IT!']), '#ff5a5a', 18);

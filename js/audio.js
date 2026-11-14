@@ -119,6 +119,13 @@ const Sound = (() => {
     },
     kick() { if (!ok('kick', 60)) return; tone(130, 0.18, { f2: 55, vol: 0.45 }); noise(0.1, { ft: 'lowpass', f: 900, f2: 200, vol: 0.4 }); },
     riposte() { tone(880, 0.6, { vol: 0.08, rev: 0.6 }); tone(1320, 0.7, { vol: 0.07, delay: 0.06, rev: 0.6 }); tone(1760, 0.9, { vol: 0.06, delay: 0.12, rev: 0.7 }); noise(0.2, { f: 1500, f2: 5000, vol: 0.2 }); },
+    crack() { tone(2400, 0.12, { f2: 1200, vol: 0.09 }); noise(0.08, { ft: 'highpass', f: 3500, vol: 0.35 }); tone(5200, 0.25, { vol: 0.03, rev: 0.4 }); },
+    shatter() {
+      noise(0.5, { ft: 'highpass', f: 2500, f2: 6000, vol: 0.5, rev: 0.5 });
+      [2900, 3700, 4600, 5900, 7100].forEach((f, i) => tone(f, 0.5 + i * 0.1, { vol: 0.05, delay: i * 0.025, rev: 0.6 }));
+      tone(160, 0.35, { f2: 50, vol: 0.4 });
+    },
+    bloodlust() { tone(110, 0.8, { f2: 220, type: 'sawtooth', vol: 0.12, lp: 900, rev: 0.4 }); noise(0.5, { ft: 'lowpass', f: 600, vol: 0.25 }); },
     scrape() { if (!ok('scrape', 80)) return; noise(0.13, { f: 2800, f2: 900, q: 2, vol: 0.16 }); tone(1500, 0.07, { vol: 0.025 }); },
     tink() { if (!ok('tink', 40)) return; tone(3200, 0.18, { vol: 0.08, rev: 0.2 }); tone(4700, 0.12, { vol: 0.05 }); noise(0.04, { ft: 'highpass', f: 5000, vol: 0.15 }); },
     slash(d = 1) {

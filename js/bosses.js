@@ -55,6 +55,7 @@ class Ronin extends Boss {
     this.hp = this.maxHp = cfg.hp || 44; this.spd = cfg.spd || 1;
     this.style = cfg.style || STYLES.ronin;
     this.bladeLen = cfg.bladeLen || 78;
+    this.breakAt = cfg.rain ? 5 : 4;
     this.phaseLine = cfg.phaseLine || 'Enough games.';
     this.blade = mkBlade({ r: 3.5, dmg: 1 }); this.blades = [this.blade];
     this.la = 1.2; this.reach = 0; this.crouch = 0; this.combo = 0; this.recT = 0.6; this.stagT = 1;
@@ -235,7 +236,7 @@ class Ronin extends Boss {
   }
   triggerCounter() {
     this.facing = G.player.x >= this.x ? 1 : -1;
-    startSwing(this.blade); this.blade.dmg = 2; this.blade.parryable = false; this.blade.guardBreak = true; this.la = -3.1;
+    startSwing(this.blade); this.blade.dmg = this.broken ? 1 : 2; this.blade.parryable = false; this.blade.guardBreak = true; this.la = -3.1;
     this.setState('counterCut');
     Sound.counterCut(); Sound.clang(1);
     FX.text(this.x, this.y - this.h / 2 - 26, 'COUNTER!', '#5fd0ff', 26);
@@ -304,6 +305,10 @@ class Ronin extends Boss {
     } else this.vx += dir * 200;
   }
   resetBlade() { this.blade.dmg = 1; this.blade.parryable = true; this.blade.guardBreak = false; }
+  onShatter() {
+    this.resetBlade(); this.dashN = 0; this.stagT = 2.2; this.setState('stagger');
+    FX.text(this.x, this.y - this.h / 2 - 70, this.cfg.rain ? 'IMPOSSIBLE...' : 'My blade...!', '#fff', 14, { bubble: true, life: 1.6, vy: -20 });
+  }
   onParried() { this.resetBlade(); this.dashN = 0; this.stagT = 1.1; this.vx = -this.facing * 300; this.setState('stagger'); }
   onBlocked() { this.resetBlade(); this.dashN = 0; this.recT = 0.45; this.setState('recover'); }
   draw(ctx) {
@@ -339,6 +344,7 @@ class Ronin extends Boss {
     }
     drawFigure(ctx, this.pose, this.style, this.facing, this.flash > 0);
     drawKatana(ctx, this.hand.x, this.hand.y, this.wang, this.bladeLen, this.s, this.style, this.glow);
+    drawCracks(ctx, this.hand.x, this.hand.y, this.wang, this.bladeLen, this.cracks, this.broken, this.s);
     if (countering) this.drawCounterBadge(ctx);
     if (this.state === 'stagger') drawStars(ctx, this.pose.head.x, this.pose.head.y - 16 * this.s, G.time, 14);
   }
@@ -558,7 +564,7 @@ class Tengu extends Boss {
     this.s = s; this.name = 'KARASU'; this.title = 'Tengu of the Crow Peaks'; this.kanji = '天狗';
     this.hp = this.maxHp = 56; this.style = STYLES.tengu; this.bloodCol = '#1a1a22';
     this.phaseLine = 'KAAAAAW!!';
-    this.blade = mkBlade({ r: 3.5, dmg: 2 }); this.blades = [this.blade]; this.bladeLen = 76;
+    this.blade = mkBlade({ r: 3.5, dmg: 2 }); this.blades = [this.blade]; this.bladeLen = 76; this.breakAt = 3;
     this.la = 0.6; this.wing = 0; this.spread = 0; this.hx = x; this.hy = gy - 280;
     const A = G.level.arena;
     this.ax0 = (A.c0 + 2) * T + 24; this.ax1 = (A.c1 - 3) * T - 24; this.gy = A.top * T;
@@ -712,6 +718,7 @@ class Tengu extends Boss {
     const a = Math.atan2(p.y - 10 - sh.y, p.x - sh.x);
     G.projectiles.push(new Projectile('feather', sh.x, sh.y, Math.cos(a) * 520, Math.sin(a) * 520, { r: 5, shooter: this, src: "the Tengu's feathers", life: 4 }));
   }
+  onShatter() { this.stuckT = 2.4; this.setState('fall'); this.vy = -200; FX.feathers(this.x, this.y, 12); }
   onParried() { this.vx = -this.ddx * 250; this.vy = -280; FX.feathers(this.x, this.y, 8); this.setState('fall'); }
   onBlocked() { this.onParried(); }
   drawWings(ctx) {
@@ -750,6 +757,7 @@ class Tengu extends Boss {
     ctx.strokeStyle = '#7a5a2a'; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(hb.x, hb.y); ctx.lineTo(hb.x - this.facing * 4, hb.y - 22); ctx.stroke();
     drawKatana(ctx, this.hand.x, this.hand.y, this.wang, this.bladeLen, this.s, this.style, this.state === 'diveW' ? '#ff6060' : null);
+    drawCracks(ctx, this.hand.x, this.hand.y, this.wang, this.bladeLen, this.cracks, this.broken, this.s);
     if (this.state === 'stuck' && this.stuckT > 1.5) drawStars(ctx, this.pose.head.x, this.pose.head.y - 18, G.time, 14);
   }
 }

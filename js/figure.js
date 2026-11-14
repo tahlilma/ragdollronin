@@ -279,6 +279,30 @@ function drawKatana(ctx, hx, hy, ang, len, s, st, glow, blood = 0) {
   }
 }
 
+// visible damage on a blade: dark zigzag cracks, and a jagged tip once it has snapped
+function drawCracks(ctx, hx, hy, ang, len, cracks, broken, s) {
+  if (!cracks) return;
+  const c = Math.cos(ang), sn = Math.sin(ang), px = -sn, py = c;
+  ctx.strokeStyle = 'rgba(20,20,26,0.85)'; ctx.lineWidth = 1.1 * s; ctx.lineCap = 'round';
+  const n = broken ? 2 : Math.min(cracks, 4);
+  for (let i = 0; i < n; i++) {
+    const t = 0.35 + i * 0.16, x = hx + c * len * t, y = hy + sn * len * t;
+    ctx.beginPath();
+    ctx.moveTo(x - px * 2 * s, y - py * 2 * s);
+    ctx.lineTo(x + c * 2 * s + px * 0.5 * s, y + sn * 2 * s + py * 0.5 * s);
+    ctx.lineTo(x - c * 1 * s + px * 2 * s, y - sn * 1 * s + py * 2 * s);
+    ctx.stroke();
+  }
+  if (broken) { // jagged snapped end
+    const ex = hx + c * len, ey = hy + sn * len;
+    ctx.fillStyle = '#cfd8db';
+    ctx.beginPath();
+    ctx.moveTo(ex - px * 2 * s, ey - py * 2 * s); ctx.lineTo(ex + c * 5 * s, ey + sn * 5 * s);
+    ctx.lineTo(ex + c * 1 * s + px * 0.5 * s, ey + sn * 1 * s + py * 0.5 * s); ctx.lineTo(ex + c * 3 * s + px * 2 * s, ey + sn * 3 * s + py * 2 * s);
+    ctx.closePath(); ctx.fill();
+  }
+}
+
 // ---------- dismemberment ----------
 const CUT = { head: 1, armF: 2, armB: 4, legF: 8, legB: 16, waist: 32 };
 const SEVER = {
