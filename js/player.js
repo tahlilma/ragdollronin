@@ -7,6 +7,8 @@ const SW_ALLOW = 6;               // how deep the tip may bite into stone
 const SW_RMIN = 4, SW_RMAX = 20;  // how far the hand reaches from the shoulder
 const RUN_SPEED = 275, JUMP_V = 720, DJUMP_V = 660, DASH_V = 950, DASH_T = 0.16;
 const PIVOT_K = 5200;             // how hard the mouse swings you around a planted blade
+// frenzy: a gamble you choose to take (Q at full bloodlust). Short, hits harder, but so does everything that hits you.
+const FRENZY_T = 6;
 const NO_INPUT = { down: () => false, take: () => false, mr: false, ml: false };
 // iai balance: a full charge is lethal (4 dmg, dismembers on a kill), but it's slow to charge, costly,
 // on a cooldown, parryable by a fast counter-swing, and a whiff leaves you wide open
@@ -48,7 +50,7 @@ class Player {
     this.pose = newPose(); this.tmpPose = newPose(); this.snapPose = newPose();
     this.ghosts = []; this.ghostT = 0;
     this.kickT = 0; this.kickCD = 0; this.riposte = 0; this.iai = null; this.iaiCD = 0; this.noCutT = 0;
-    this.lust = 0; this.lustT = 0; this.cracks = 0; this.broken = false;
+    this.lust = 0; this.lustT = 0; this.frenzyT = 0; this.frenzyHeal = false; this.cracks = 0; this.broken = false;
     this.style = style || STYLES.player;
     this.sword = { ang: -0.4, av: 0, r: 12, rDes: 12, len: 80, base: 10, hx: x, hy: y, bx: x, by: y, tx: x, ty: y, speed: 0, clangCD: 0, trail: [] };
     this.band1 = new Rope(7, 4.5, x, y - 30); this.band2 = new Rope(6, 4.2, x, y - 30);
@@ -76,7 +78,11 @@ class Player {
     const I = G.inputBlocked ? NO_INPUT : Input;
     sw.clangCD -= dt; this.invuln -= dt; this.dashCD -= dt; this.plantCD -= dt; this.pogoCD -= dt; this.getupT -= dt; this.stun -= dt;
     this.kickCD -= dt; this.kickT -= dt; this.riposte -= dt; this.noCutT -= dt;
-    this.lustT += dt; if (this.lustT > 6 && this.lust > 0) this.lust = Math.max(0, this.lust - dt * 0.3); // fades if you stop killing
+    this.lustT += dt;
+    if (this.frenzyT > 0) {
+      this.frenzyT -= dt; this.lust = 5 * clamp(this.frenzyT / FRENZY_T, 0, 1);
+      if (this.frenzyT <= 0 && !this.dead) this.endFrenzy(true);
+    } else if (this.lustT > 4 && this.lust > 0) this.lust = Math.max(0, this.lust - dt * 0.5); // use it or lose it
 
     sw.blood = Math.max(0, (sw.blood || 0) - dt * 0.05);
     if (sw.blood > 0.15 && Settings.gore && Math.random() < sw.blood * 0.03) { // drips off the tip
@@ -101,6 +107,7 @@ class Player {
     if (this.rag) { this.updateRagdoll(dt); return; }
 
     // ---- kick (F) and the iai draw-cut (hold / release left click) ----
+    if (I.take('KeyQ') && this.lust >= 5 && this.frenzyT <= 0) this.startFrenzy();
     if (I.take('KeyF') && this.kickCD <= 0 && !(this.iai && this.iai.phase === 'strike')) this.kick();
     this.updateIai(dt, I);
     I.take('Mouse0');
@@ -394,7 +401,7 @@ class Player {
   // Returns true if it landed a hit. Used by the swung blade and the iai draw-cut.
   bladeStrike(g, speed, dirx, diry, minDmg = 1) {
     let dmg = Math.max(minDmg, speed > 2600 ? 3 : speed > 1500 ? 2 : 1);
-    if (this.lust >= 3) dmg += 1;                // bloodlust: the blade bites deeper
+    if (this.frenzyT > 0) dmg += 1;              // frenzy: the blade bites deeper
     if (this.broken) dmg = Math.max(1, dmg - 1); // a snapped blade doesn't
     let landed = false;
     const ripost = () => { // a hit inside the riposte window after a parry is always a critical
@@ -446,18 +453,31 @@ class Player {
   // a successful parry opens a short riposte window (longer for a perfect, early parry)
   // ---- bloodlust: kills, ring-outs and perfect parries stack it; getting hit wipes it ----
   addLust(n) {
+    if (this.frenzyT > 0) return; // the meter is burning down
     const before = this.lust;
     this.lust = Math.min(5, this.lust + n); this.lustT = 0;
-    if (before < 3 && this.lust >= 3) { FX.text(this.x, this.y - 84, 'BLOODLUST  +1 DMG', '#ff3b3b', 20); Sound.bloodlust(); }
-    if (before < 5 && this.lust >= 5) { FX.text(this.x, this.y - 100, 'FRENZY: KILLS HEAL', '#ff3b3b', 22, { font: 'mincho' }); Sound.bloodlust(); G.flash = Math.max(G.flash, 0.12); }
+    if (before < 5 && this.lust >= 5) { FX.text(this.x, this.y - 92, 'FRENZY READY  [Q]', '#ff3b3b', 20, { font: 'mincho' }); Sound.bloodlust(); }
+  }
+  // Frenzy: +1 damage and one heal on a kill, for a few seconds. In exchange every blow that lands on you
+  // hits 1 harder, and when it burns out you are left winded with no ki.
+  startFrenzy() {
+    this.frenzyT = FRENZY_T; this.frenzyHeal = true; this.lust = 5;
+    FX.text(this.x, this.y - 96, 'FRENZY', '#ff3b3b', 30, { font: 'mincho', life: 1.2 });
+    FX.ring(this.x, this.y, 10, 120, '#ff3b3b', 0.45, 4);
+    Sound.bloodlust(); G.flash = Math.max(G.flash, 0.14); G.shake(6);
+  }
+  endFrenzy(spent) {
+    this.frenzyT = 0; this.lust = 0; this.lustT = 0;
+    if (spent) { this.ki = 0; this.winded = true; FX.text(this.x, this.y - 70, 'SPENT', '#9fd8ff', 18); }
   }
   onKill(e, ringout) {
     if (this.dead) return;
-    const frenzied = this.lust >= 5;
-    this.addLust(1);
-    this.ki = Math.min(100, this.ki + (ringout ? 40 : 20));
+    this.ki = Math.min(100, this.ki + (ringout ? 25 : 10));
     if (ringout && e) FX.text(this.x, this.y - 70, 'RING OUT!', '#ffe14a', 20);
-    if (frenzied && this.hp < this.maxHp) { this.hp++; FX.text(this.x, this.y - 56, '+1 HP', '#7dffa0', 18); Sound.heal(); }
+    if (this.frenzyT > 0) {
+      this.frenzyT = Math.min(FRENZY_T, this.frenzyT + 0.75); // blood feeds it, a little
+      if (this.frenzyHeal && this.hp < this.maxHp) { this.frenzyHeal = false; this.hp++; FX.text(this.x, this.y - 56, '+1 HP', '#7dffa0', 18); Sound.heal(); }
+    } else this.addLust(1);
   }
   // a rival's perfect parry cracks your blade (online duels); three and it snaps until you respawn
   crackOwnBlade() {
@@ -588,6 +608,7 @@ class Player {
   // cutAt: where a blade struck {x, y}; a killing blade blow can take a limb or the head
   hurt(dmg, kx, ky, src, attackerId, cutAt) {
     if (this.dead || this.rag || this.invuln > 0 || this.dashT > 0) return false;
+    if (this.frenzyT > 0) dmg += 1; // frenzy leaves you wide open
     this.hp -= dmg;
     G.lastHitBy = src;
     if (attackerId) this.lastAttacker = { id: attackerId, t: G.time };
@@ -598,8 +619,9 @@ class Player {
     const pose0 = copyPose(newPose(), this.pose);
     FX.text(this.x, this.y - 50, pick(['OOF', 'AGH', 'OW', 'ACK', 'HNNG', 'WAH']), '#ff8080', 18);
     this.unplant(); this.dashT = 0; this.stun = 0; this.iai = null;
-    if (this.lust >= 2) FX.text(this.x, this.y - 80, 'bloodlust lost', '#ff9090', 13);
-    this.lust = 0;
+    if (this.frenzyT > 0) FX.text(this.x, this.y - 80, 'FRENZY BROKEN', '#ff9090', 15);
+    else if (this.lust >= 2) FX.text(this.x, this.y - 80, 'bloodlust lost', '#ff9090', 13);
+    this.endFrenzy(false);
     this.rag = new Ragdoll(this.pose, this.vx * 0.3 + kx, this.vy * 0.2 + ky, rand(-6, 6));
     this.ragT = 0.65 + dmg * 0.2;
     if (this.hp <= 0) {
@@ -650,7 +672,7 @@ class Player {
   netFlags() {
     return (this.rag ? 1 : 0) | (this.dead ? 2 : 0) | (this.dashT > 0 ? 4 : 0) | (this.planted ? 8 : 0) |
       (this.winded ? 16 : 0) | (this.invuln > 0 && !this.rag ? 32 : 0) | (this.stun > 0 ? 64 : 0) |
-      (this.iai && this.iai.phase === 'charge' ? 128 : 0) | (this.riposte > 0 ? 256 : 0) | (this.lust >= 3 ? 512 : 0);
+      (this.iai && this.iai.phase === 'charge' ? 128 : 0) | (this.riposte > 0 ? 256 : 0) | (this.frenzyT > 0 ? 512 : 0);
   }
   ragSword() {
     const sw = this.sword, p = this.pose;
@@ -714,6 +736,10 @@ class Player {
 
   draw(ctx) {
     const sw = this.sword;
+    if (!this.dead) { // soft contact shadow
+      const gy = G.level.groundBelow(this.x, this.y, 6);
+      if (gy !== null) { ctx.fillStyle = `rgba(0,0,0,${clamp(0.35 - (gy - this.y - this.h / 2) / 600, 0, 0.35)})`; ctx.beginPath(); ctx.ellipse(this.rag ? this.pose.hip.x : this.x, gy, 17, 4, 0, 0, TAU); ctx.fill(); }
+    }
     for (const g of this.ghosts) {
       ctx.globalAlpha = g.a * 0.35;
       drawFigure(ctx, g.pose, this.style, g.f, true);
@@ -727,10 +753,10 @@ class Player {
     drawSlashTrail(ctx, sw.trail);
     const z = this.iai;
     if (z && z.phase === 'charge' && !this.rag) drawIaiCharge(ctx, this.x, this.y, z.charge);
-    const glow = this.riposte > 0 || (z && z.charge >= 1) ? '#ffd76a' : this.lust >= 3 ? '#ff3030' : Math.abs(sw.av) > 26 ? '#bff6ff' : null;
+    const glow = this.riposte > 0 || (z && z.charge >= 1) ? '#ffd76a' : this.frenzyT > 0 ? '#ff3030' : Math.abs(sw.av) > 26 ? '#bff6ff' : null;
     drawKatana(ctx, sw.hx, sw.hy, sw.ang, sw.len, 1, this.style, glow, sw.blood);
     drawCracks(ctx, sw.hx, sw.hy, sw.ang, sw.len, this.cracks, this.broken, 1);
-    if (this.lust >= 5 && !this.dead && Math.random() < 0.5) FX.fire(this.x + rand(-12, 12), this.y + rand(-20, 20), 1, '#ff2a2a', 40); // frenzy aura
+    if (this.frenzyT > 0 && !this.dead && Math.random() < 0.5) FX.fire(this.x + rand(-12, 12), this.y + rand(-20, 20), 1, '#ff2a2a', 40); // frenzy aura
     if (this.winded && !this.rag && !this.dead) {
       ctx.fillStyle = '#9fd8ff';
       for (let i = 0; i < 2; i++) {

@@ -18,6 +18,7 @@
       <div class="kanji-big">浪人</div>
       <h1>RAGDOLL RONIN</h1>
       <p class="tag">a wobbly samurai tragedy in five acts</p>
+      <button id="continueBtn" class="continue" data-act="continue">Begin the tale</button>
       <div id="stages" class="stages"></div>
       <div class="title-row">
         <div class="card pvp">
@@ -37,7 +38,7 @@
           <button class="small ghost" data-act="gore" id="goreBtn">Gore: on</button>
         </div>
       </div>
-      <p class="warn">Fast swings cut. Slow swings bonk. Dying anywhere restarts the whole stage.</p>
+      <p class="warn">Fast swings cut. Slow swings bonk. Dying anywhere restarts the whole chapter.</p>
     </div>
   </section>
 
@@ -56,6 +57,7 @@
         <div><kbd>S</kbd> drop through ledges</div>
         <div><kbd>F</kbd> kick (no damage, huge shove)</div>
         <div><kbd>Hold left-click</kbd> charge iai · release to dash-cut</div>
+        <div><kbd>Q</kbd> frenzy (when bloodlust is full)</div>
         <div><kbd>Esc</kbd> pause · <kbd>R</kbd> restart · <kbd>M</kbd> mute</div>
         <div><kbd>T</kbd> taunt (online duel)</div>
       </div>
@@ -64,7 +66,9 @@
         <li>Swing <b>into</b> an enemy's blade while it attacks to <b>parry</b> and stagger them. Holding still only blocks.</li>
         <li>After a parry you have a brief <b>riposte</b>: your next hit is a guaranteed critical. Parry right as the swing starts for a <b>perfect</b> parry (longer stagger and window).</li>
         <li><b>Perfect parries crack weapons.</b> Crack a blade enough times (3 for most samurai, more for heavies and bosses) and it <b>shatters</b>: shorter reach and less damage for the rest of the fight. The shock leaves them open, so the next hit is an <b>EXECUTION</b>. Online, rivals can break your blade too.</li>
-        <li><b>Bloodlust:</b> kills, ring-outs and perfect parries fill it, and getting hit wipes it. At 3 your blade burns for +1 damage; at 5 you're in a frenzy and every kill heals you. Kills also refund ki.</li>
+        <li><b>Bloodlust and Frenzy:</b> kills, ring-outs and perfect parries fill the five blood pips; getting hit wipes them, and they drain if you dawdle. At five, press <kbd>Q</kbd> for a 6-second <b>Frenzy</b>: +1 damage on every cut, and the first kill heals 1 HP. The price: every blow that lands on you hits 1 harder, a hit ends it on the spot, and when it burns out you are left winded with no ki. It is a gamble, not a power-up.</li>
+        <li><b>Ambushes:</b> on the road, gates slam shut and waves drop in. Clear them all to open the way and catch your breath (+1 HP).</li>
+        <li><b>Spearmen</b> out-reach you: parry the thrust or punish the long recovery. <b>Shinobi</b> are fast and fragile, flip away after striking, and throw shuriken you can swat back.</li>
         <li><b>Kicks</b> don't hurt, but they send people flying, and further the more hurt they are. Kick rivals into pits and spikes. A kick also breaks the Ronin's counter stance.</li>
         <li><b>Iai draw-cut:</b> hold left-click to sheathe and charge, then release to dash-cut toward the cursor: 2 damage, 3 past 60% charge, and a lethal 4 at full charge that dismembers on a kill. But it costs 35 ki and has a cooldown. While charging you crawl and can't swing or parry, and rivals see and hear it coming. A fast counter-swing parries it, and a miss leaves you wide open.</li>
         <li>Swat arrows, feathers and foxfire with a fast swing to send them back. Boulders need a <i>very</i> fast one.</li>
@@ -104,11 +108,23 @@
 
   <section id="clear" class="screen hidden">
     <div class="panel">
-      <div class="kanji-mid">勝</div>
-      <h2>STAGE CLEARED</h2>
+      <div class="kanji-mid" id="clearKanji">勝</div>
+      <h2 id="clearTitle">STAGE CLEARED</h2>
       <p id="clearStats"></p>
       <button data-act="next">Continue</button>
       <button class="ghost" data-act="quit">Title</button>
+    </div>
+  </section>
+
+  <section id="story" class="screen hidden story">
+    <div class="story-card">
+      <p id="storyAct" class="story-act"></p>
+      <div id="storyKanji" class="story-kanji"></div>
+      <h2 id="storyTitle"></h2>
+      <div class="rule"></div>
+      <div id="storyText" class="story-text"></div>
+      <button id="storyGo" data-act="storyGo">Take the road</button>
+      <button class="ghost small" data-act="quit">Back</button>
     </div>
   </section>
 
@@ -116,7 +132,8 @@
     <div class="panel">
       <div class="kanji-mid">完</div>
       <h2>THE SHOGUN HAS FALLEN</h2>
-      <p id="winStats"></p>
+      <div id="winText" class="story-text"></div>
+      <p id="winStats" class="count"></p>
       <button data-act="quit">Return to title</button>
     </div>
   </section>
@@ -127,6 +144,7 @@
 <script src="js/audio.js"></script>
 <script src="js/music.js"></script>
 <script src="js/world.js"></script>
+<script src="js/gfx.js"></script>
 <script src="js/figure.js"></script>
 <script src="js/fx.js"></script>
 <script src="js/projectiles.js"></script>

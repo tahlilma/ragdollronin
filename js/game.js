@@ -5,7 +5,7 @@ const G = {
   time: 0, hitstop: 0, timeScale: 1, slowT: 0, slowScale: 1,
   wind: 0, windNext: 0, boss: null, bossIntro: 0, bossDeadT: -1, stageTime: 0, kills: 0,
   W: 1280, H: 720, dpr: 1, scale: 1, viewW: 1280, viewH: 720,
-  bg: null, bgCache: {}, motes: [], lastHitBy: '', uiT: 0, killedBy: null, mapCard: 0,
+  bg: null, bgCache: null, lastHitBy: '', uiT: 0, killedBy: null, mapCard: 0,
   flash: 0, zoomKick: 0, edgeTint: null, inputBlocked: false, menuOpen: false,
   get viewTop() { return this.cam.y - this.viewH / 2; },
   shake(a) { this.cam.shake = Math.max(this.cam.shake, a); },
@@ -40,7 +40,7 @@ const G = {
         const perfect = (b.t || 0) < 0.09;
         if (perfect) { if (e.staggerT) e.staggerT *= 1.6; if (e.stagT) e.stagT *= 1.6; }
         p.gainRiposte(perfect);
-        if (perfect) { p.addLust(0.5); if (e.crackWeapon) e.crackWeapon(); } // perfect parries crack their blade
+        if (perfect) { p.addLust(1); if (e.crackWeapon) e.crackWeapon(); } // perfect parries crack their blade
         return;
       }
       if (b.guardBreak) {
@@ -62,7 +62,7 @@ const G = {
   },
   onBossDefeated(b) {
     this.bossDeadT = 0;
-    Music.play(STAGES[this.stage].pal);
+    Music.play(stageMusic(this.stage));
     FX.text(b.x, b.y - 100, '討 伐', '#ffffff', 46, { life: 2.5, vy: -10, font: 'mincho' });
   },
   // ---- online duel hooks (called from net.js) ----
@@ -87,29 +87,44 @@ const G = {
 };
 
 const Save = {
-  data: { unlocked: 1, deaths: [0, 0, 0, 0, 0], cleared: [false, false, false, false, false] },
-  load() { try { const s = JSON.parse(localStorage.getItem('ragdoll-ronin-v1')); if (s) Object.assign(this.data, s); } catch (e) { /* no storage */ } },
-  save() { try { localStorage.setItem('ragdoll-ronin-v1', JSON.stringify(this.data)); } catch (e) { /* no storage */ } },
+  data: { unlocked: 1, deaths: STAGES.map(() => 0), cleared: STAGES.map(() => false), seen: STAGES.map(() => false) },
+  load() {
+    try {
+      const s = JSON.parse(localStorage.getItem('ragdoll-ronin-v2'));
+      if (s) {
+        Object.assign(this.data, s);
+        for (const k of ['deaths', 'cleared', 'seen']) while (this.data[k].length < STAGES.length) this.data[k].push(k === 'deaths' ? 0 : false);
+        return;
+      }
+      // the five-stage save: each old stage is now the boss chapter of its act
+      const o = JSON.parse(localStorage.getItem('ragdoll-ronin-v1'));
+      if (!o) return;
+      this.data.unlocked = clamp((o.unlocked - 1) * 2 + 1, 1, STAGES.length);
+      (o.deaths || []).forEach((d, i) => { if (i * 2 + 1 < STAGES.length) this.data.deaths[i * 2 + 1] = d; });
+      (o.cleared || []).forEach((c, i) => { if (c && i * 2 + 1 < STAGES.length) { this.data.cleared[i * 2 + 1] = true; this.data.cleared[i * 2] = true; } });
+    } catch (e) { /* no storage */ }
+  },
+  save() { try { localStorage.setItem('ragdoll-ronin-v2', JSON.stringify(this.data)); } catch (e) { /* no storage */ } },
 };
+const stageMusic = (i) => STAGES[i].music || STAGES[i].pal;
 
 // ------------------------------------------------------------------ setup
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
-let vignette = null, skyGrad = null;
 
 function resize() {
-  G.dpr = Math.min(window.devicePixelRatio || 1, 2);
+  G.dpr = Math.min(window.devicePixelRatio || 1, G.dprCap || 2);
   G.W = window.innerWidth; G.H = window.innerHeight;
   canvas.width = Math.round(G.W * G.dpr); canvas.height = Math.round(G.H * G.dpr);
   canvas.style.width = G.W + 'px'; canvas.style.height = G.H + 'px';
   G.scale = Math.max(G.H / 720, G.W / 1600);
   G.viewW = G.W / G.scale; G.viewH = G.H / G.scale;
-  vignette = null; skyGrad = null;
 }
 
-function initMotes() {
-  G.motes = [];
-  for (let i = 0; i < 70; i++) G.motes.push({ x: Math.random() * 1600, y: Math.random() * 900, z: rand(0.3, 1.2), ph: rand(0, TAU) });
+// one set of parallax layers in memory at a time (each is a 2048x720 canvas)
+function useBackground(key, pal, theme) {
+  if (!G.bgCache || G.bgCache.key !== key) G.bgCache = { key, layers: buildBackground(pal, theme) };
+  G.bg = G.bgCache.layers;
 }
 
 function resetWorld() {
@@ -118,8 +133,7 @@ function resetWorld() {
   G.boss = null; G.bossIntro = 0; G.bossDeadT = -1; G.wind = 0; G.windNext = 0;
   G.stageTime = 0; G.kills = 0; G.hitstop = 0; G.timeScale = 1; G.slowT = 0; G.lastHitBy = '';
   G.flash = 0; G.zoomKick = 0; G.killedBy = null;
-  G.cam.y = 360; G.cam.shake = 0;
-  initMotes();
+  G.cam.y = 360; G.cam.shake = 0; G.bossLineT = 0;
 }
 
 // ------------------------------------------------------------------ story mode
@@ -130,9 +144,7 @@ function loadStage(i) {
   def.build(b);
   const L = b.build(PALS[def.pal]);
   G.level = L;
-  if (!G.bgCache[i]) G.bgCache[i] = buildBackground(L.pal, def.theme);
-  G.bg = G.bgCache[i];
-  skyGrad = null;
+  useBackground('s' + def.theme, L.pal, def.theme);
   resetWorld();
   G.player = new Player(L.start.x, L.start.y);
   for (const s of L.spawns) { const e = makeEnemy(s.type, s.x, s.y, s.opts); if (e) { G.enemies.push(e); e.update(0); } }
@@ -154,10 +166,28 @@ function startStage(i) {
   G.state = 'play'; G.menuOpen = false; G.inputBlocked = false;
   showScreen(null);
   Input.clear();
-  Music.play(STAGES[i].pal);
+  Music.play(stageMusic(i));
   updateMouseWorld();
   G.player.placeSword();
 }
+
+// entering a chapter from the menu (or from the one before it) plays its story card first; retries skip it
+function beginStage(i) {
+  const def = STAGES[i];
+  Sound.init();
+  Net.disconnect();
+  previewStage(i);
+  G.state = 'story'; G.storyStage = i; G.uiT = 0;
+  document.getElementById('storyAct').textContent = `ACT ${['I', 'II', 'III', 'IV', 'V'][i >> 1]}  ·  ${ACTS[i >> 1].toUpperCase()}`;
+  document.getElementById('storyKanji').textContent = def.kanji;
+  document.getElementById('storyTitle').textContent = `${NUMERALS[i]}　${def.name.toUpperCase()}`;
+  document.getElementById('storyText').innerHTML = def.story.map((t, k) => `<p style="animation-delay:${0.25 + k * 0.9}s">${t}</p>`).join('');
+  document.getElementById('storyGo').textContent = def.boss ? 'Draw your blade' : 'Take the road';
+  showScreen('story');
+  Music.play(stageMusic(i));
+  Save.data.seen[i] = true; Save.save();
+}
+const NUMERALS = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
 
 // ------------------------------------------------------------------ online / LAN duel mode
 function loadPvpMap(idx) {
@@ -167,10 +197,7 @@ function loadPvpMap(idx) {
   def.build(b);
   const L = b.build(PALS[def.pal]);
   G.level = L;
-  const key = 'pvp' + mi;
-  if (!G.bgCache[key]) G.bgCache[key] = buildBackground(L.pal, def.theme);
-  G.bg = G.bgCache[key];
-  skyGrad = null;
+  useBackground('s' + def.theme, L.pal, def.theme);
   resetWorld();
   const sp = pickSpawn();
   G.player = new Player(sp.x, sp.y, playerStyle(Net.color));
@@ -280,6 +307,49 @@ function step(dt) {
     }
   }
 
+  // ambushes: the gates shut, waves drop in, and the way on opens when the last of them is dead
+  for (const B of L.ambushes) {
+    if (B.state === 0 && !p.dead && !p.rag && p.x > (B.c0 + 3) * T && p.x < (B.c1 - 3) * T) {
+      B.state = 1; B.wave = -1; B.wait = 0.9; B.foes = [];
+      for (let r = 0; r < B.top; r++) { L.set(B.c0, r, 1); L.set(B.c1 - 1, r, 1); }
+      p.placeSword();
+      Sound.gate(); G.shake(10);
+      FX.dust(B.c0 * T + T / 2, B.top * T, 14); FX.dust((B.c1 - 1) * T + T / 2, B.top * T, 14);
+      FX.text(p.x, p.y - 110, '伏 兵', '#ff5a5a', 44, { life: 1.8, vy: -12, font: 'mincho' });
+      FX.text(p.x, p.y - 70, 'AMBUSH', '#ffffff', 18, { life: 1.8, vy: -12 });
+      G.enemies = G.enemies.filter((e) => e.x > B.c0 * T && e.x < B.c1 * T); // stragglers stay outside
+    } else if (B.state === 1 && !p.dead) {
+      if (B.foes.every((e) => e.dead)) {
+        B.wait -= dt;
+        if (B.wait <= 0) {
+          if (B.wave + 1 < B.waves.length) {
+            B.wave++; B.wait = 0.9; B.foes = [];
+            for (const [type, dx, opts] of B.waves[B.wave]) {
+              const ex = (B.c0 + dx) * T + T / 2;
+              const e = makeEnemy(type, ex, B.top * T, opts || {});
+              e.y -= 420; e.update(0);
+              B.foes.push(e); G.enemies.push(e);
+              FX.smoke(ex, B.top * T - 30, 8); FX.ring(ex, B.top * T - 4, 4, 46, '#ffffff', 0.4, 2);
+            }
+            Sound.whoosh(1800);
+            if (B.wave > 0) FX.text(p.x, p.y - 90, `WAVE ${B.wave + 1} / ${B.waves.length}`, '#ffd76a', 20, { life: 1.3, vy: -20 });
+          } else {
+            B.state = 2;
+            for (let r = 0; r < B.top; r++) { L.set(B.c0, r, 0); L.set(B.c1 - 1, r, 0); }
+            Sound.gate(); Sound.heal(); G.shake(6);
+            if (p.hp < p.maxHp) { p.hp++; FX.text(p.x, p.y - 56, '+1 HP', '#7dffa0', 18); }
+            FX.text(p.x, p.y - 100, 'THE WAY IS OPEN', '#ffe8a8', 24, { life: 2, vy: -14, font: 'mincho' });
+          }
+        }
+      }
+    }
+  }
+  // the gate at the end of a road chapter
+  if (L.goal && G.state === 'play' && !p.dead && !p.rag && p.x > L.goal.x - 10 && Math.abs(p.y - L.goal.y) < 160) {
+    FX.ring(L.goal.x, L.goal.y - 60, 10, 220, '#ffe8a8', 0.8, 5); Sound.gong();
+    stageCleared();
+  }
+
   // boss arena
   const A = L.arena;
   if (A && !A.started && !p.dead && !p.rag && p.x > (A.c0 + 3) * T) {
@@ -295,7 +365,11 @@ function step(dt) {
     G.bossIntro = 2.6;
     Music.play(A.boss);
   }
-  if (G.bossIntro > 0) G.bossIntro -= dt;
+  if (G.bossIntro > 0) {
+    G.bossIntro -= dt;
+    const line = STAGES[G.stage].line; // the boss has something to say first
+    if (G.bossIntro <= 0 && line && G.boss && !G.boss.dead) FX.text(G.boss.x, G.boss.y - G.boss.h / 2 - 34, line, '#ffffff', 15, { bubble: true, life: 3.2, vy: -6 });
+  }
   if (G.bossDeadT >= 0) {
     G.bossDeadT += dt;
     if (G.bossDeadT > 3.2 && G.state === 'play' && !p.dead) stageCleared();
@@ -313,6 +387,7 @@ function updateCamera(dt) {
     const ax0 = A.c0 * T, ax1 = A.c1 * T;
     if (ax1 - ax0 <= G.viewW) { x0 = x1 = (ax0 + ax1) / 2; } else { x0 = ax0 + G.viewW / 2; x1 = ax1 - G.viewW / 2; }
   }
+  for (const B of L.ambushes) if (B.state === 1) { x0 = Math.max(x0, B.c0 * T + G.viewW / 2); x1 = Math.min(x1, B.c1 * T - G.viewW / 2); if (x1 < x0) x0 = x1 = (B.c0 + B.c1) * T / 2; }
   if (x1 < x0) x0 = x1 = L.width / 2;
   tx = clamp(tx, x0, x1);
   ty = clamp(ty, G.viewH / 2 - 500, L.height - G.viewH / 2);
@@ -324,7 +399,7 @@ function updateCamera(dt) {
 
 // ------------------------------------------------------------------ screens
 const screens = {};
-for (const id of ['title', 'help', 'music', 'pause', 'dead', 'clear', 'win']) screens[id] = document.getElementById(id);
+for (const id of ['title', 'help', 'music', 'pause', 'dead', 'clear', 'win', 'story']) screens[id] = document.getElementById(id);
 function showScreen(id) {
   for (const k in screens) screens[k].classList.toggle('hidden', k !== id);
   document.body.classList.toggle('in-game', id === null);
@@ -333,15 +408,26 @@ function showScreen(id) {
 function buildTitle() {
   const wrap = document.getElementById('stages');
   wrap.innerHTML = '';
+  let act = null;
   STAGES.forEach((s, i) => {
+    if (i % 2 === 0) { // one column per act: the road, then its boss
+      act = document.createElement('div');
+      act.className = 'act';
+      act.innerHTML = `<span class="act-n">ACT ${['I', 'II', 'III', 'IV', 'V'][i >> 1]}</span><span class="act-t">${i < Save.data.unlocked ? ACTS[i >> 1] : '···'}</span>`;
+      wrap.appendChild(act);
+    }
     const btn = document.createElement('button');
     const locked = i >= Save.data.unlocked;
-    btn.className = 'stage' + (locked ? ' locked' : '') + (Save.data.cleared[i] ? ' cleared' : '');
+    btn.className = 'stage' + (locked ? ' locked' : '') + (Save.data.cleared[i] ? ' cleared' : '') + (s.boss ? ' boss' : '');
     btn.disabled = locked;
-    btn.innerHTML = `<span class="num">${['一', '二', '三', '四', '五'][i]}</span><span class="nm">${locked ? '???' : s.name}</span><span class="kj">${locked ? '' : s.kanji}</span><span class="dc">${Save.data.deaths[i] ? '死 ×' + Save.data.deaths[i] : ''}</span>`;
-    btn.addEventListener('click', () => { Sound.init(); Sound.click(); startStage(i); });
-    wrap.appendChild(btn);
+    btn.innerHTML = `<span class="num">${NUMERALS[i]}</span><span class="nm">${locked ? '???' : s.name}</span><span class="kj">${locked ? '' : s.kanji}</span><span class="dc">${Save.data.deaths[i] ? '死 ×' + Save.data.deaths[i] : ''}</span>`;
+    btn.addEventListener('click', () => { Sound.init(); Sound.click(); beginStage(i); });
+    act.appendChild(btn);
   });
+  const cur = Math.min(STAGES.length - 1, Save.data.unlocked - 1);
+  const done = Save.data.cleared[STAGES.length - 1];
+  document.getElementById('continueBtn').textContent = done ? 'The tale is told · replay any chapter' : Save.data.unlocked > 1 || Save.data.deaths[0] ? `Continue · ${NUMERALS[cur]}  ${STAGES[cur].name}` : 'Begin the tale';
+  document.getElementById('continueBtn').style.display = done ? 'none' : '';
   document.getElementById('muteBtn').textContent = Sound.muted ? 'Sound: off (M)' : 'Sound: on (M)';
   document.getElementById('goreBtn').textContent = Settings.gore ? 'Gore: on' : 'Gore: off';
   const nameEl = document.getElementById('pvpName');
@@ -400,7 +486,7 @@ function showDeath() {
   G.state = 'dead';
   Save.data.deaths[G.stage]++; Save.save();
   const A = G.level.arena;
-  const key = A && A.started ? STAGES[G.stage].boss : 'stage';
+  const key = A && A.started ? STAGES[G.stage].boss : G.level.ambushes.some((b) => b.state === 1) ? 'ambush' : 'stage';
   document.getElementById('taunt').textContent = pick(TAUNTS[key]);
   const n = Save.data.deaths[G.stage];
   let extra = '';
@@ -421,11 +507,14 @@ function stageCleared() {
   Save.save();
   if (G.stage === STAGES.length - 1) {
     const total = Save.data.deaths.reduce((a, b) => a + b, 0);
-    document.getElementById('winStats').textContent = `Total deaths across your journey: ${total}. The blood moon sets. You may rest, ronin.`;
+    document.getElementById('winText').innerHTML = ENDING.map((t, k) => `<p style="animation-delay:${0.4 + k * 1.2}s">${t}</p>`).join('');
+    document.getElementById('winStats').textContent = `Deaths across the whole journey: ${total}. The blood moon sets. You may rest, ronin.`;
     showScreen('win');
     return;
   }
   const t = G.stageTime, m = Math.floor(t / 60), s = Math.floor(t % 60);
+  document.getElementById('clearKanji').textContent = STAGES[G.stage].boss ? '勝' : '進';
+  document.getElementById('clearTitle').textContent = STAGES[G.stage].boss ? 'SEAL BROKEN' : 'THE ROAD GOES ON';
   document.getElementById('clearStats').innerHTML =
     `<b>${STAGES[G.stage].name}</b> cleared in ${m}:${String(s).padStart(2, '0')}<br>Foes cut down: ${G.kills} · Deaths here: ${Save.data.deaths[G.stage]}`;
   showScreen('clear');
@@ -466,7 +555,9 @@ document.addEventListener('click', (e) => {
     case 'resume': resumeGame(); break;
     case 'restart': startStage(G.stage); break;
     case 'quit': quitToTitle(); break;
-    case 'next': startStage(Math.min(STAGES.length - 1, G.stage + 1)); break;
+    case 'next': beginStage(Math.min(STAGES.length - 1, G.stage + 1)); break;
+    case 'continue': beginStage(Math.min(STAGES.length - 1, Save.data.unlocked - 1)); break;
+    case 'storyGo': if (G.state === 'story') startStage(G.storyStage); break;
     case 'mute': Sound.toggleMute(); buildTitle(); break;
     case 'gore':
       Settings.gore = !Settings.gore;
@@ -501,7 +592,10 @@ function handleUiKeys() {
   } else if (G.state === 'dead') {
     if (G.uiT > 0.5 && Input.take('KeyR', 'Space', 'Enter')) startStage(G.stage);
   } else if (G.state === 'clear') {
-    if (Input.take('Enter', 'Space')) startStage(Math.min(STAGES.length - 1, G.stage + 1));
+    if (Input.take('Enter', 'Space')) beginStage(Math.min(STAGES.length - 1, G.stage + 1));
+  } else if (G.state === 'story') {
+    if (G.uiT > 0.4 && Input.take('Enter', 'Space')) startStage(G.storyStage);
+    else if (Input.take('Escape')) quitToTitle();
   }
 }
 
@@ -516,22 +610,15 @@ function render(rdt) {
   // zoom punch (parries) scales the whole scene around the screen centre
   const z = 1 + G.zoomKick;
   c.setTransform(G.dpr * s * z, 0, 0, G.dpr * s * z, G.dpr * s * (1 - z) * vw / 2, G.dpr * s * (1 - z) * vh / 2);
-  if (!skyGrad) {
-    skyGrad = c.createLinearGradient(0, 0, 0, vh);
-    skyGrad.addColorStop(0, pal.skyTop); skyGrad.addColorStop(1, pal.skyBot);
-  }
-  c.fillStyle = skyGrad; c.fillRect(0, 0, vw, vh);
+  const sc = Gfx.build(pal, Math.ceil(vw), Math.ceil(vh));
+  Gfx.drawSky(c, sc, cam, vw, vh, G.time);
   const vy = (360 - cam.y);
-  const mx = vw * 0.66 - cam.x * 0.02, my = 150 + vy * 0.05;
-  const mg = c.createRadialGradient(mx, my, 20, mx, my, 280);
-  mg.addColorStop(0, `rgba(${pal.glow},0.55)`); mg.addColorStop(1, `rgba(${pal.glow},0)`);
-  c.fillStyle = mg; c.fillRect(mx - 280, my - 280, 560, 560);
-  c.fillStyle = pal.moon; c.beginPath(); c.arc(mx, my, 62, 0, TAU); c.fill();
   for (const lay of G.bg) {
     const off = -((cam.x * lay.factor) % BGW + BGW) % BGW;
     const ly = vy * lay.factor * 0.6 + (vh - BGH) * 0.5 + 40 * lay.factor;
     for (let x = off; x < vw; x += BGW) c.drawImage(lay.c, x, ly);
   }
+  Gfx.drawFog(c, sc, cam, vw, vh, G.time, 0);
   // world
   c.save();
   c.translate(Math.round(-cam.x + vw / 2 + cam.sx), Math.round(-cam.y + vh / 2 + cam.sy));
@@ -539,6 +626,7 @@ function render(rdt) {
   for (const l of L.lanterns) if (l.x > x0 && l.x < x1) drawLantern(c, l, pal, G.time);
   for (const sh of L.shrines) if (sh.x > x0 - 100 && sh.x < x1 + 100) drawShrine(c, sh, pal, G.time);
   for (const sg of L.signs) if (sg.x > x0 && sg.x < x1) drawSign(c, sg);
+  if (L.goal && L.goal.x > x0 - 100 && L.goal.x < x1 + 100) drawGoal(c, L.goal, pal, G.time);
   L.draw(c, x0, x1);
   FX.drawDecals(c);
   FX.drawProps(c);
@@ -547,7 +635,7 @@ function render(rdt) {
   for (const e of G.enemies) if (e.x > x0 - 300 && e.x < x1 + 300) e.draw(c);
   for (const e of G.enemies) if (e.execT > 0 && !e.dead) drawExecuteMark(c, e);
   if (G.mode === 'pvp') for (const r of Net.remotes.values()) r.draw(c);
-  const preview = G.state === 'title';
+  const preview = G.state === 'title' || G.state === 'story';
   if (!preview) G.player.draw(c);
   for (const pr of G.projectiles) if (pr.type !== 'marker' && pr.type !== 'tornado') pr.draw(c);
   FX.draw(c);
@@ -559,15 +647,16 @@ function render(rdt) {
   let near = null, nd = 160;
   for (const sg of L.signs) { const d = Math.abs(sg.x - p.x); if (d < nd && Math.abs(sg.y - p.y) < 160) { nd = d; near = sg; } }
   if (near && !preview) drawSignBubble(c, near);
-  FX.drawTexts(c);
   c.restore();
-  drawMotes(c, rdt, pal);
+  Gfx.drawFog(c, sc, cam, vw, vh, G.time, 1);
+  Gfx.drawForeground(c, sc, cam, vw, vh);
+  Gfx.drawMotes(c, rdt, pal, cam, vw, vh);
+  c.save();
+  c.translate(Math.round(-cam.x + vw / 2 + cam.sx), Math.round(-cam.y + vh / 2 + cam.sy));
+  FX.drawTexts(c); // callouts stay crisp above the mist
+  c.restore();
   c.setTransform(G.dpr * s, 0, 0, G.dpr * s, 0, 0);
-  if (!vignette) {
-    vignette = c.createRadialGradient(vw / 2, vh / 2, vh * 0.35, vw / 2, vh / 2, vh * 1.0);
-    vignette.addColorStop(0, 'rgba(0,0,0,0)'); vignette.addColorStop(1, 'rgba(0,0,0,0.55)');
-  }
-  c.fillStyle = vignette; c.fillRect(0, 0, vw, vh);
+  Gfx.drawVignette(c, sc, vw, vh);
   if (G.edgeTint) {
     const eg = c.createRadialGradient(vw / 2, vh / 2, vh * 0.3, vw / 2, vh / 2, vh * 0.95);
     eg.addColorStop(0, 'rgba(0,0,0,0)'); eg.addColorStop(1, G.edgeTint);
@@ -602,30 +691,6 @@ function drawSignBubble(c, sg) {
   lines.forEach((l, i) => c.fillText(l, sg.x, y + 10 + i * 21));
 }
 
-function drawMotes(c, rdt, pal) {
-  const kind = pal.pkind, cam = G.cam;
-  c.fillStyle = pal.particle;
-  for (const m of G.motes) {
-    m.ph += rdt;
-    let vx = 0, vy = 0;
-    switch (kind) {
-      case 'ember': vx = Math.sin(m.ph) * 15; vy = -40 * m.z; break;
-      case 'snow': vx = -20 * m.z + (G.wind || 0) * 0.3; vy = 50 * m.z; break;
-      case 'petal': vx = -35 * m.z + Math.sin(m.ph * 2) * 20; vy = 30 * m.z; break;
-      case 'ash': vx = -15 * m.z; vy = 20 * m.z; break;
-      default: vx = Math.sin(m.ph * 0.7) * 10; vy = -8 * m.z;
-    }
-    m.x += vx * rdt; m.y += vy * rdt;
-    const W = G.viewW + 100, H = G.viewH + 100;
-    const sx = (((m.x - cam.x * m.z * 0.6) % W) + W) % W - 50;
-    const sy = (((m.y - cam.y * m.z * 0.3) % H) + H) % H - 50;
-    c.globalAlpha = 0.25 + 0.45 * Math.abs(Math.sin(m.ph * 1.3)) * m.z;
-    if (kind === 'petal') { c.beginPath(); c.ellipse(sx, sy, 3.5 * m.z, 2 * m.z, m.ph, 0, TAU); c.fill(); }
-    else { c.beginPath(); c.arc(sx, sy, (kind === 'snow' ? 2.2 : 1.6) * m.z, 0, TAU); c.fill(); }
-  }
-  c.globalAlpha = 1;
-}
-
 const FONT = '"Zen Kaku Gothic New", system-ui, sans-serif', SERIF = '"Shippori Mincho B1", serif';
 
 function drawHUD(c, vw, vh) {
@@ -657,11 +722,12 @@ function drawHUD(c, vw, vh) {
   for (let i = 0; i < 5; i++) {
     const fill = clamp(p.lust - i, 0, 1), x = 190 + i * 16, y = 32;
     c.fillStyle = 'rgba(255,255,255,0.12)'; c.beginPath(); c.arc(x, y, 5.5, 0, TAU); c.fill();
-    if (fill > 0) { c.fillStyle = p.lust >= 5 ? '#ff2a2a' : p.lust >= 3 ? '#e5323d' : '#8e1a24'; c.beginPath(); c.arc(x, y, 5.5 * fill, 0, TAU); c.fill(); }
+    if (fill > 0) { c.fillStyle = p.frenzyT > 0 ? '#ff2a2a' : p.lust >= 5 ? (Math.floor(G.time * 6) % 2 ? '#ffffff' : '#ff2a2a') : '#b3202c'; c.beginPath(); c.arc(x, y, 5.5 * fill, 0, TAU); c.fill(); }
   }
   c.font = `800 10px ${FONT}`; c.textAlign = 'left'; c.textBaseline = 'top';
-  c.fillStyle = p.lust >= 3 ? '#ff5a5a' : 'rgba(255,255,255,0.45)';
-  c.fillText(p.lust >= 5 ? 'FRENZY' : p.lust >= 3 ? 'BLOODLUST +1' : 'BLOODLUST', 182, 42);
+  c.fillStyle = p.frenzyT > 0 || p.lust >= 5 ? '#ff5a5a' : 'rgba(255,255,255,0.45)';
+  c.fillText(p.frenzyT > 0 ? 'FRENZY  +1 DEALT · +1 TAKEN' : p.lust >= 5 ? 'FRENZY READY · PRESS Q' : 'BLOODLUST', 182, 42);
+  if (p.frenzyT > 0) G.edgeTint = 'rgba(150,0,10,0.3)';
   if (p.cracks) { c.fillStyle = p.broken ? '#ff6a6a' : '#ffe9a8'; c.fillText(p.broken ? 'BLADE BROKEN' : `BLADE CRACKED ${p.cracks}/3`, 182, 54); }
   const z = p.iai, ch = z && z.phase === 'charge';
   if (ch) {
@@ -678,7 +744,15 @@ function drawHUD(c, vw, vh) {
   c.font = `800 20px ${SERIF}`; c.fillStyle = 'rgba(255,255,255,0.85)';
   c.fillText(def.kanji, vw - 20, 18);
   c.font = `600 12px ${FONT}`; c.fillStyle = 'rgba(255,255,255,0.6)';
-  c.fillText(`${def.name.toUpperCase()}  ·  死 ${Save.data.deaths[G.stage]}`, vw - 20, 44);
+  c.fillText(`${NUMERALS[G.stage]} · ${def.name.toUpperCase()}  ·  死 ${Save.data.deaths[G.stage]}`, vw - 20, 44);
+  const amb = G.level.ambushes.find((a) => a.state === 1);
+  if (amb) { // ambush: which wave, and how many are still standing
+    const left = amb.foes.filter((e) => !e.dead).length;
+    c.textAlign = 'center';
+    c.font = `800 13px ${FONT}`; c.fillStyle = '#ff8a8a';
+    c.fillText(`AMBUSH  ·  WAVE ${Math.max(1, amb.wave + 1)} / ${amb.waves.length}  ·  ${left} LEFT`, vw / 2, 20);
+    c.textAlign = 'right';
+  }
   const b = G.boss;
   if (b && (!b.dead || G.bossDeadT < 2)) {
     const w = Math.min(640, vw - 80), x = (vw - w) / 2, y = vh - 54;
@@ -789,6 +863,7 @@ function drawCursor(c) {
 
 // ------------------------------------------------------------------ main loop
 let last = performance.now(), acc = 0, frameErrors = 0;
+const perf = { t: 0, n: 0 };
 function frame(now) {
   requestAnimationFrame(frame); // schedule first so one bad frame can never freeze the game
   try { tickFrame(now); } catch (e) { if (frameErrors++ < 5) console.error(e); }
@@ -796,6 +871,13 @@ function frame(now) {
 function tickFrame(now) {
   const rdt = Math.min(0.05, (now - last) / 1000);
   last = now;
+  // if the machine can't hold ~50 fps, render at a lower pixel ratio instead of dropping frames
+  perf.t += rdt; perf.n++;
+  if (perf.t > 2.5) {
+    const avg = perf.t / perf.n;
+    perf.t = 0; perf.n = 0;
+    if (avg > 0.0205 && (G.dprCap || 2) > 1 && G.dpr > 1) { G.dprCap = Math.max(1, G.dpr - 0.5); resize(); }
+  }
   G.uiT += rdt;
   handleUiKeys();
   if (G.state === 'play' || G.state === 'dead' || G.state === 'clear') {
@@ -812,7 +894,7 @@ function tickFrame(now) {
   }
   if (G.mode === 'pvp' && Net.connected) { Net.update(rdt); Net.tick(now, G.player); }
   if (G.state === 'dead' && Input.take('Mouse0') && G.uiT > 0.5) startStage(G.stage);
-  if (G.state === 'title' && G.level) {
+  if ((G.state === 'title' || G.state === 'story') && G.level) {
     G.time += rdt;
     G.cam.x += rdt * 28;
     if (G.cam.x > G.level.width - G.viewW / 2 - 1400) G.cam.x = G.viewW / 2 + 200;

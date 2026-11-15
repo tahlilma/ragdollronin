@@ -174,23 +174,38 @@ class Samurai extends Actor {
   constructor(x, y, o = {}) {
     super(x, y - 27, 24, 54);
     this.heavy = !!o.heavy;
-    this.name = this.heavy ? 'a very large samurai' : 'a samurai';
-    this.hp = this.maxHp = o.hp || (this.heavy ? 7 : 4);
-    this.speed = o.speed || (this.heavy ? 120 : 150);
-    this.windupT = o.windup || (this.heavy ? 0.55 : 0.5);
-    this.combo = o.combo || (this.heavy ? 3 : 1);
-    this.style = this.heavy ? STYLES.heavy : STYLES.samurai;
+    // kinds: samurai, heavy, spear (ashigaru: long thrusts that out-reach you), ninja (fast, fragile, throws shuriken)
+    const kind = this.kind = o.kind || (this.heavy ? 'heavy' : 'samurai');
+    const spear = this.spear = kind === 'spear', ninja = this.ninja = kind === 'ninja';
+    this.name = this.heavy ? 'a very large samurai' : spear ? 'a spearman' : ninja ? 'a shinobi' : 'a samurai';
+    this.hp = this.maxHp = o.hp || (this.heavy ? 7 : ninja ? 2 : 4);
+    this.speed = o.speed || (this.heavy ? 120 : spear ? 125 : ninja ? 235 : 150);
+    this.windupT = o.windup || (this.heavy ? 0.55 : spear ? 0.62 : ninja ? 0.3 : 0.5);
+    this.combo = o.combo || (this.heavy ? 3 : ninja ? 2 : 1);
+    this.style = STYLES[kind];
     this.blade = mkBlade({ r: 3, dmg: this.heavy ? 2 : 1 }); this.blades = [this.blade];
-    this.bladeLen = this.heavy ? 70 : 60;
-    this.breakAt = this.heavy ? 4 : 3;
+    this.bladeLen = this.heavy ? 70 : spear ? 112 : ninja ? 46 : 60;
+    this.breakAt = this.heavy ? 4 : ninja ? 2 : 3;
+    this.reach = spear ? 168 : 100; this.keep = spear ? 132 : 74; this.tooClose = spear ? 96 : 40;
+    this.handR = 15; this.ta = 0; this.throwCD = rand(0.8, 2);
+    if (ninja) this.scarf = new Rope(6, 4.5, x, y - 50);
     this.la = -0.7; this.cool = rand(0.2, 0.8); this.comboN = 0; this.guardT = 0; this.staggerT = 0;
     this.glinted = false;
+  }
+  // a spear thrust is aimed at wherever the player stands when the wind-up starts
+  aimThrust(p) { this.ta = clamp(Math.atan2(p.y - 6 - (this.y - 15), Math.abs(p.x - this.x)), -0.55, 0.35); }
+  // is there somewhere to land past this gap?
+  canLeap(dir) {
+    for (let k = 3; k <= 5; k++) if (G.level.groundBelow(this.x + dir * k * T, this.y - 60, 5) !== null) return true;
+    return false;
   }
   update(dt) {
     this.base(dt);
     const p = G.player, dx = p.x - this.x, dy = p.y - this.y, adx = Math.abs(dx);
-    let move = 0, tla = -0.7, lsp = 12;
-    const locked = this.state === 'slash' || this.state === 'windup' || this.state === 'stagger' || this.state === 'recover';
+    let move = 0, tla = -0.7, lsp = 12, thr = 15;
+    const spear = this.spear;
+    this.throwCD -= dt;
+    const locked = this.state === 'slash' || this.state === 'windup' || this.state === 'stagger' || this.state === 'recover' || this.state === 'throw';
     if (!locked) this.facing = dx >= 0 ? 1 : -1;
     switch (this.state) {
       case 'idle':
@@ -207,37 +222,55 @@ class Samurai extends Actor {
           if (Math.random() < (this.heavy ? 0.9 : 0.55)) { this.setState('guard'); this.guardT = 1.4; FX.text(this.x, this.y - 50, '!', '#ffffff', 20); break; }
         }
         if (p.dead) { this.setState('idle'); break; }
-        if (adx > 74) move = this.facing; else if (adx < 40) move = -this.facing * 0.6;
-        if (adx < 100 && this.cool <= 0 && Math.abs(dy) < 90) {
-          if (Math.random() < (this.heavy ? 0.15 : 0.3)) { this.setState('guard'); this.guardT = rand(0.6, 1.1); }
-          else { this.comboN = 0; this.glinted = false; this.setState('windup'); }
+        if (adx > this.keep) move = this.facing; else if (adx < this.tooClose) move = -this.facing * (spear ? 1 : 0.6);
+        if (this.ninja && this.throwCD <= 0 && adx > 200 && adx < 560 && Math.abs(dy) < 200) { this.glinted = false; this.setState('throw'); break; }
+        if (adx < this.reach && this.cool <= 0 && Math.abs(dy) < 90) {
+          if (Math.random() < (this.heavy ? 0.15 : this.ninja ? 0.1 : 0.3)) { this.setState('guard'); this.guardT = rand(0.6, 1.1); }
+          else { this.comboN = 0; this.glinted = false; this.aimThrust(p); this.setState('windup'); }
         }
         if (adx > 900) this.setState('idle');
         break;
       case 'guard':
         tla = -1.35; lsp = 20;
-        if (this.st > this.guardT) { this.comboN = 0; this.glinted = false; this.setState('windup'); }
+        if (this.st > this.guardT) { this.comboN = 0; this.glinted = false; this.aimThrust(p); this.setState('windup'); }
+        break;
+      case 'throw': // shinobi: a glint, then a shuriken
+        tla = -1.9; lsp = 18;
+        if (!this.glinted && this.st > 0.12) { this.glinted = true; FX.glint(this.x + this.facing * 8, this.y - 26, '#c8f0ff', 16); }
+        if (this.st > 0.4) {
+          const sx = this.x + this.facing * 10, sy = this.y - 16, a = Math.atan2(p.y - 8 - sy, p.x + p.vx * 0.2 - sx);
+          G.projectiles.push(new Projectile('shuriken', sx, sy, Math.cos(a) * 620, Math.sin(a) * 620, { r: 6, shooter: this, src: 'a shuriken' }));
+          Sound.shoot(); this.throwCD = rand(2.2, 3.4); this.glinted = false; this.cool = Math.max(this.cool, 0.25);
+          this.setState('approach');
+        }
         break;
       case 'windup': {
         const wt = this.comboN > 0 ? this.windupT * 0.55 : this.windupT;
         tla = -2.5; lsp = 11;
+        if (spear) { tla = this.ta; lsp = 14; thr = 2; }
         if (!this.glinted && this.st > wt - 0.15) { this.glinted = true; FX.glint(this.blade.bx, this.blade.by, '#ffffff', 18); }
-        if (this.st >= wt) { this.setState('slash'); startSwing(this.blade); this.la = -2.5; Sound.swing(); }
+        if (this.st >= wt) { this.setState('slash'); startSwing(this.blade); if (!spear) this.la = -2.5; Sound.swing(); }
         break;
       }
       case 'slash': {
         const d = 0.16, k = Math.min(1, this.st / d);
-        this.la = lerp(-2.5, 1.1, easeOut(k)); tla = null;
-        if (this.st < 0.08) this.vx = this.facing * 260;
+        tla = null;
+        if (spear) { this.la = this.ta; thr = lerp(2, 40, easeOut(k)); }
+        else this.la = lerp(-2.5, 1.1, easeOut(k));
+        if (this.st < 0.08) this.vx = this.facing * (spear ? 200 : this.ninja ? 380 : 260);
         if (k >= 1) this.setState('recover');
         break;
       }
       case 'recover':
         tla = 1.1;
-        if (this.st > 0.45) {
+        if (spear) { tla = this.ta; thr = 40 - Math.min(1, this.st / 0.6) * 25; } // the shaft hangs out there: punish it
+        if (this.st > (spear ? 0.65 : this.ninja ? 0.28 : 0.45)) {
           this.comboN++;
           if (this.comboN < this.combo && adx < 140) { this.glinted = false; this.setState('windup'); }
-          else { this.cool = rand(0.6, 1.3); this.setState('approach'); }
+          else {
+            this.cool = rand(0.6, 1.3); this.setState('approach');
+            if (this.ninja && this.grounded) { this.vx = -this.facing * 400; this.vy = -430; this.grounded = false; } // flips away
+          }
         }
         break;
       case 'stagger':
@@ -250,21 +283,27 @@ class Samurai extends Actor {
         break;
     }
     if (tla !== null) this.la += (tla - this.la) * Math.min(1, dt * lsp);
+    this.handR += (thr - this.handR) * Math.min(1, dt * (this.state === 'slash' ? 60 : 14));
     if (move !== 0 && this.grounded) {
-      if (this.ledgeAhead(move)) move = 0;
+      if (this.ledgeAhead(move)) {
+        if (this.ninja && sgn(move) === this.facing && this.canLeap(sgn(move))) { this.vy = -700; this.vx = sgn(move) * 330; this.grounded = false; }
+        else move = 0;
+      }
       else if (G.level.solidAt(this.x + move * (this.w / 2 + 6), this.y)) this.vy = -640;
     }
-    if (this.state !== 'slash') this.vx = approach(this.vx, move * this.speed, (this.grounded ? 1400 : 300) * dt);
+    if (this.state !== 'slash') this.vx = approach(this.vx, move * this.speed, (this.grounded ? 1400 : this.ninja ? 0 : 300) * dt);
     this.physics(dt);
     if (this.y > G.level.height + 150) { this.dead = true; this.remove = true; G.kills++; if (G.player) G.player.onKill(this, true); return; }
     this.phase += Math.abs(this.vx) * dt * 0.05;
     // weapon + pose
-    const sh = this.shoulder();
-    const wa = keepAboveGround(this.facing > 0 ? this.la : Math.PI - this.la, sh.y, 15 + this.bladeLen, this.footY());
+    const sh = this.shoulder(), hr = this.handR;
+    const wa = keepAboveGround(this.facing > 0 ? this.la : Math.PI - this.la, sh.y, hr + this.bladeLen, this.footY());
     const c = Math.cos(wa), s = Math.sin(wa);
-    const hx = sh.x + c * 15, hy = sh.y + s * 15;
+    const hx = sh.x + c * hr, hy = sh.y + s * hr;
     this.hand = { x: hx, y: hy }; this.wang = wa;
-    setBlade(this.blade, hx + c * 9, hy + s * 9, hx + c * this.bladeLen, hy + s * this.bladeLen);
+    const b0 = spear ? this.bladeLen * 0.45 : 9; // only the business end of a spear cuts
+    setBlade(this.blade, hx + c * b0, hy + s * b0, hx + c * this.bladeLen, hy + s * this.bladeLen);
+    if (this.scarf) this.scarf.update(this.pose.neck.x - this.facing * 3, this.pose.neck.y + 1, (G.wind || 0) * 0.0004 - this.vx * 0.0004);
     this.blade.active = this.state === 'slash';
     bladeAttack(this, this.blade);
     standPose(this.pose, {
@@ -272,17 +311,17 @@ class Samurai extends Actor {
       run: this.grounded ? Math.min(1, Math.abs(this.vx) / 150) : 0, air: !this.grounded, vy: this.vy,
       lean: this.state === 'slash' ? 0.25 : this.state === 'windup' ? -0.12 : 0.05,
       crouch: this.state === 'windup' ? 4 : this.state === 'stagger' ? 6 : 0,
-      hF: this.hand, hB: { x: hx - c * 6, y: hy - s * 6 },
+      hF: this.hand, hB: spear ? { x: hx - c * 16, y: hy - s * 16 } : { x: hx - c * 6, y: hy - s * 6 },
     });
   }
-  onParried() { this.setState('stagger'); this.staggerT = this.heavy ? 0.8 : 1.1; this.vx = -this.facing * 260; }
+  onParried() { this.setState('stagger'); this.staggerT = this.heavy ? 0.8 : this.spear ? 1.3 : 1.1; this.vx = -this.facing * 260; }
   onShatter() { this.setState('stagger'); this.staggerT = 2.2; FX.text(this.x, this.y - 70, pick(['My blade!', 'No...', 'Mercy!']), '#fff', 13, { bubble: true, life: 1.4, vy: -20 }); }
   takeHit(dmg, dx, dy, hx, hy, speed, proj) {
     // a raised guard facing you catches the iai draw-cut, then he counter-attacks
     const p = G.player;
     if (!proj && this.state === 'guard' && p.iai && p.iai.phase === 'strike' && sgn(p.x - this.x) === this.facing) {
       p.iaiBlocked(this);
-      this.comboN = 0; this.glinted = false; this.setState('windup');
+      this.comboN = 0; this.glinted = false; this.aimThrust(p); this.setState('windup');
       return;
     }
     super.takeHit(dmg, dx, dy, hx, hy, speed, proj);
@@ -300,9 +339,11 @@ class Samurai extends Actor {
   }
   hatProp(vx, vy) {
     const st = this.style;
+    if (this.ninja) return;
     FX.prop({
       x: this.pose.head.x, y: this.pose.head.y - 6, vx: vx * 0.5 + rand(-60, 60), vy: Math.min(-350, vy * 0.6), vr: rand(-14, 14),
       draw(ctx) {
+        if (st.hat === 'kasa') { ctx.fillStyle = st.kasa; ctx.beginPath(); ctx.moveTo(-16, 0); ctx.lineTo(16, 0); ctx.lineTo(0, -9); ctx.closePath(); ctx.fill(); return; }
         ctx.fillStyle = st.helm; ctx.beginPath(); ctx.arc(0, 0, 8.5, Math.PI, TAU); ctx.closePath(); ctx.fill();
         ctx.strokeStyle = st.crest; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.arc(0.75, -15.75, 7.5, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
       },
@@ -310,9 +351,11 @@ class Samurai extends Actor {
   }
   draw(ctx) {
     this.drawShadow(ctx);
+    if (this.scarf) this.scarf.draw(ctx, this.style.scarf, 3);
     drawFigure(ctx, this.pose, this.style, this.facing, this.flash > 0);
     const glow = this.state === 'windup' && this.st > this.windupT * 0.4 ? '#ffdada' : null;
-    drawKatana(ctx, this.hand.x, this.hand.y, this.wang, this.bladeLen, 1, this.style, glow);
+    if (this.spear) drawSpear(ctx, this.hand.x, this.hand.y, this.wang, this.bladeLen, this.style, glow);
+    else drawKatana(ctx, this.hand.x, this.hand.y, this.wang, this.bladeLen, 1, this.style, glow);
     drawCracks(ctx, this.hand.x, this.hand.y, this.wang, this.bladeLen, this.cracks, this.broken, 1);
     if (this.state === 'stagger') drawStars(ctx, this.pose.head.x, this.pose.head.y - 14, G.time);
     if (this.hp < this.maxHp) {
@@ -428,7 +471,7 @@ class Corpse {
   constructor(e, vx, vy) {
     this.rag = new Ragdoll(e.pose, vx, vy, rand(-8, 8));
     this.style = e.style; this.t = 0; this.pose = newPose();
-    this.blen = e.bladeLen || 0; this.s = e.s || 1;
+    this.blen = e.bladeLen || 0; this.s = e.s || 1; this.spear = !!e.spear;
     this.col = e.bloodCol || '#b3122a';
     this.headAng = Math.atan2(e.pose.head.y - e.pose.neck.y, e.pose.head.x - e.pose.neck.x) + Math.PI / 2;
     this.headSpin = rand(-16, 16);
@@ -471,7 +514,9 @@ class Corpse {
     ctx.globalAlpha = this.t > 18 ? Math.max(0, 1 - (this.t - 18) / 2) : 1;
     const p = this.pose;
     drawFigure(ctx, p, this.style, sgn(p.head.x - p.hip.x), this.t < 0.08, this.rag.cut, this.headAng);
-    if (this.blen) drawKatana(ctx, p.hF.x, p.hF.y, this.wang !== undefined ? this.wang : Math.atan2(p.hF.y - p.eF.y, p.hF.x - p.eF.x), this.blen, this.s, this.style, null, 0.6);
+    const wa = this.wang !== undefined ? this.wang : Math.atan2(p.hF.y - p.eF.y, p.hF.x - p.eF.x);
+    if (this.spear) drawSpear(ctx, p.hF.x, p.hF.y, wa, this.blen, this.style, null);
+    else if (this.blen) drawKatana(ctx, p.hF.x, p.hF.y, wa, this.blen, this.s, this.style, null, 0.6);
     ctx.globalAlpha = 1;
   }
 }
@@ -480,6 +525,8 @@ function makeEnemy(type, x, y, o) {
   switch (type) {
     case 'samurai': return new Samurai(x, y, o);
     case 'heavy': return new Samurai(x, y, Object.assign({ heavy: true }, o));
+    case 'spear': return new Samurai(x, y, Object.assign({ kind: 'spear' }, o));
+    case 'ninja': return new Samurai(x, y, Object.assign({ kind: 'ninja' }, o));
     case 'archer': return new Archer(x, y, o);
   }
   return null;

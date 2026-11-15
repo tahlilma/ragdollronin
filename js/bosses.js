@@ -338,7 +338,7 @@ class Ronin extends Boss {
       const blue = solidStyle(this.style, '#7fe0ff');
       ctx.save(); ctx.globalAlpha = 0.55 + 0.45 * Math.sin(G.time * 16) * 0.5 + 0.2;
       for (const [ox, oy] of [[-2.5, 0], [2.5, 0], [0, -2.5], [0, 2.5]]) {
-        ctx.save(); ctx.translate(ox, oy); drawFigure(ctx, this.pose, blue, this.facing, false); ctx.restore();
+        ctx.save(); ctx.translate(ox, oy); figBody(ctx, this.pose, blue, this.facing, true, 0, null); ctx.restore();
       }
       ctx.restore();
     }

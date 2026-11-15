@@ -58,4 +58,4 @@ Incoming WebSocket messages count 20 to 1, which works out to about 9 hours of c
 - `server.js`: local/LAN duel relay (Node, no dependencies)
 - `start.js`: `npm start` (npx serve + local relay)
 
-Dev shortcuts: `?stage=3`, `?stage=3&boss`, `?room=code`, `?relay=host:port`
+Story mode is ten chapters in five acts: a road chapter (ambushes, then a gate) followed by that act's boss. Dev shortcuts: `?stage=1`..`?stage=10`, `?stage=4&boss`, `?room=code`, `?relay=host:port`

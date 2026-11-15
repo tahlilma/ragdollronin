@@ -10,7 +10,11 @@ const STYLES = {
   tengu: { s: 1.3, head: 'tengu', skin: '#cf2f2a', hair: '#f2f2f2', gi: '#ece6d8', arm: '#ddd5c4', hakama: '#3b3c4f', leg: '#272838', foot: '#14141c', obi: '#d4a62a', eye: '#111111', wing: '#14141b', blade: '#e9eef6', hilt: '#251818', tsuba: '#d4a62a' },
   kitsune: { s: 1.12, head: 'kitsune', skin: '#fbf7f0', hair: '#fbf7f0', gi: '#fbf7f0', arm: '#efe8de', hakama: '#c3243a', leg: '#9e1c2e', foot: '#2a0a10', obi: '#7fd8ff', eye: '#c3243a', mark: '#d22a3c' },
 };
-STYLES.heavy = Object.assign({}, STYLES.samurai, { armor: '#2a2f3a', trim: '#c6ced8', helm: '#14171d', crest: '#d8343c', gi: '#1a1d24', arm: '#14161b', mask: '#111111', eye: '#ff4a3a' });
+STYLES.samurai.banner = '#b3262e';
+STYLES.spear = { s: 1, head: 'human', hat: 'kasa', skin: '#d9ae86', hair: '#111111', gi: '#5b4a34', arm: '#4b3d2b', hakama: '#33301f', leg: '#25231a', foot: '#0e0d0a', armor: '#7a5f33', trim: '#221c12', obi: '#a3262e', kasa: '#2a2622', eye: '#111111', blade: '#e4ecef', hilt: '#6b4a2a' };
+STYLES.ninja = { s: 1, head: 'human', hat: 'hood', hood: '#1a1d2a', skin: '#d9ae86', hair: '#111111', gi: '#2a2e42', arm: '#222638', hakama: '#1c1f2e', leg: '#161824', foot: '#0a0b10', obi: '#8e1a2c', scarf: '#b3202f', eye: '#ffffff', blade: '#dfe9ec', hilt: '#15151a', tsuba: '#3a3a44' };
+for (const k of ['player', 'archer', 'ronin', 'tengu', 'kitsune']) STYLES[k].sleeve = true;
+STYLES.heavy = Object.assign({}, STYLES.samurai, { banner: '#8d99a8', armor: '#2a2f3a', trim: '#c6ced8', helm: '#14171d', crest: '#d8343c', gi: '#1a1d24', arm: '#14161b', mask: '#111111', eye: '#ff4a3a' });
 
 // the same character, every colour replaced by one (hit flash, glowing outlines)
 const _solidCache = new Map();
@@ -73,12 +77,16 @@ function standPose(p, o) {
 }
 
 // ---------- drawing ----------
+// Figures are drawn twice: a fattened ink silhouette first, then the colours on top, which gives every
+// character a clean dark outline against the painted backgrounds. _ow is the extra width of the ink pass.
+const INK = '#0b0d13';
+let _ow = 0;
 function strokeLine(ctx, a, b, w, c) {
-  ctx.strokeStyle = c; ctx.lineWidth = w;
+  ctx.strokeStyle = c; ctx.lineWidth = w + _ow;
   ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
 }
 function strokeLine3(ctx, a, b, c, w, col) {
-  ctx.strokeStyle = col; ctx.lineWidth = w;
+  ctx.strokeStyle = col; ctx.lineWidth = w + _ow;
   ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(c.x, c.y); ctx.stroke();
 }
 const lp = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
@@ -96,10 +104,28 @@ function drawStump(ctx, x, y, r) {
 
 // cut: severed-part bitmask (CUT.*); headAng: spin of a severed head
 function drawFigure(ctx, p, st, f, flash, cut = 0, headAng = null) {
-  if (flash) st = whiteStyle(st);
+  if (flash) { figBody(ctx, p, whiteStyle(st), f, true, cut, headAng); return; }
+  _ow = 2.4 * Math.min(st.s, 1.6);
+  figBody(ctx, p, solidStyle(st, INK), f, true, cut, headAng);
+  _ow = 0;
+  figBody(ctx, p, st, f, false, cut, headAng);
+}
+function figBody(ctx, p, st, f, flash, cut, headAng) {
   const s = st.s;
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   const stumps = [];
+  if (st.banner && !(cut & CUT.waist)) { // sashimono: a little war banner on the back
+    const dx = p.neck.x - p.hip.x, dy = p.neck.y - p.hip.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+    const bx = lerp(p.hip.x, p.neck.x, 0.75) - f * 5 * s, by = lerp(p.hip.y, p.neck.y, 0.75);
+    const tx = bx + ux * 30 * s - f * 3 * s, ty = by + uy * 30 * s;
+    strokeLine(ctx, { x: bx, y: by }, { x: tx, y: ty }, 1.6 * s, '#2a1c14');
+    const wv = Math.sin(G.time * 6 + p.hip.x * 0.03) * 2 * s;
+    ctx.fillStyle = st.banner; ctx.strokeStyle = st.banner; ctx.lineWidth = _ow;
+    ctx.beginPath();
+    ctx.moveTo(tx, ty); ctx.lineTo(tx - f * 11 * s, ty + wv - ux * 2);
+    ctx.lineTo(tx - f * 11 * s - ux * 17 * s, ty - uy * 17 * s - wv); ctx.lineTo(tx - ux * 17 * s, ty - uy * 17 * s);
+    ctx.closePath(); ctx.fill(); if (_ow) ctx.stroke();
+  }
   if (cut & CUT.armB) {
     const e = stubEnd(p.eB, p.hB, 10 * s);
     strokeLine3(ctx, e, p.eB, p.hB, 5 * s, shade(st.arm, -0.3));
@@ -107,6 +133,10 @@ function drawFigure(ctx, p, st, f, flash, cut = 0, headAng = null) {
   } else strokeLine3(ctx, p.neck, p.eB, p.hB, 5 * s, shade(st.arm, -0.3));
   strokeLine(ctx, p.kB, p.fB, 6 * s, shade(st.leg, -0.2));
   strokeLine(ctx, p.kF, p.fF, 6 * s, st.leg);
+  if (st.head !== 'oni') { // hakama hems flare over the shins
+    strokeLine(ctx, p.kB, lp(p.kB, p.fB, 0.5), 9 * s, shade(st.hakama, -0.18));
+    strokeLine(ctx, p.kF, lp(p.kF, p.fF, 0.5), 9 * s, st.hakama);
+  }
   strokeLine(ctx, p.fB, { x: p.fB.x + f * 4 * s, y: p.fB.y }, 4.5 * s, st.foot);
   strokeLine(ctx, p.fF, { x: p.fF.x + f * 4 * s, y: p.fF.y }, 4.5 * s, st.foot);
   // torso (cut in half at the waist: two stubs)
@@ -118,7 +148,13 @@ function drawFigure(ctx, p, st, f, flash, cut = 0, headAng = null) {
     strokeLine(ctx, p.neck, upEnd, 13 * s, st.armor || st.gi);
     strokeLine(ctx, p.hip, loEnd, 13 * s, st.gi);
     stumps.push([upEnd, 6 * s], [loEnd, 6 * s]);
-  } else strokeLine(ctx, p.hip, p.neck, 13 * s, st.gi);
+  } else {
+    strokeLine(ctx, p.hip, p.neck, 13 * s, st.gi);
+    if (!st.armor && st.head !== 'oni') { // lapel: a lighter fold down the front of the gi
+      const a = { x: p.neck.x + f * 2.5 * s, y: p.neck.y + 2 * s }, b = lp(p.hip, p.neck, 0.3);
+      strokeLine(ctx, a, { x: b.x + f * 1 * s, y: b.y }, 2.2 * s, shade(st.gi, 0.18));
+    }
+  }
   if (st.armor && !halved) {
     const a = lp(p.hip, p.neck, 0.18), b = lp(p.hip, p.neck, 0.86);
     strokeLine(ctx, a, b, 15 * s, st.armor);
@@ -165,8 +201,9 @@ function drawFigure(ctx, p, st, f, flash, cut = 0, headAng = null) {
     strokeLine3(ctx, e, p.eF, p.hF, 5.5 * s, st.arm);
     stumps.push([e, 3 * s], [p.neck, 3.5 * s]);
   } else strokeLine3(ctx, p.neck, p.eF, p.hF, 5.5 * s, st.arm);
+  if (st.sleeve) strokeLine(ctx, p.eF, lp(p.eF, p.hF, 0.55), 8 * s, st.arm); // wide kimono sleeve
   ctx.fillStyle = st.skin;
-  ctx.beginPath(); ctx.arc(p.hF.x, p.hF.y, 2.6 * s, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(p.hF.x, p.hF.y, 2.6 * s + _ow / 2, 0, TAU); ctx.fill();
   if (!flash) for (const [pt, r] of stumps) drawStump(ctx, pt.x, pt.y, r);
 }
 
@@ -177,6 +214,7 @@ function drawHead(ctx, p, st, f, angOverride = null, severed = false) {
   ctx.save();
   ctx.translate(h.x, h.y); ctx.rotate(ang);
   if (f < 0) ctx.scale(-1, 1);
+  if (_ow) { const k = (r + _ow * 0.5) / r; ctx.scale(k, k); } // ink pass: a slightly bigger head
   if (severed) { // ragged neck under the head
     ctx.fillStyle = st.skin; ctx.fillRect(-r * 0.35, r * 0.6, r * 0.7, r * 0.7);
     ctx.fillStyle = '#b3122a'; ctx.beginPath(); ctx.ellipse(0, r * 1.3, r * 0.42, r * 0.2, 0, 0, TAU); ctx.fill();
@@ -229,7 +267,12 @@ function drawHead(ctx, p, st, f, angOverride = null, severed = false) {
       ctx.fillRect(r * 0.4, -r * 0.2, r * 0.25, r * 0.2);
     }
   }
-  if (st.hat === 'band') {
+  if (st.hat === 'hood') { // shinobi: everything wrapped but the eyes
+    circ(0, 0, r * 1.06, st.hood);
+    ctx.fillStyle = st.skin; ctx.fillRect(r * 0.05, -r * 0.42, r * 0.95, r * 0.42);
+    ctx.fillStyle = st.eye; ctx.fillRect(r * 0.45, -r * 0.3, r * 0.3, r * 0.16);
+    poly([-r * 0.9, r * 0.2, -r * 1.7, r * 0.7, -r * 0.7, r * 0.75], st.hood);
+  } else if (st.hat === 'band') {
     ctx.strokeStyle = st.band; ctx.lineWidth = 2.6 * s;
     ctx.beginPath(); ctx.moveTo(-r * 1.0, -r * 0.3); ctx.lineTo(r * 1.0, -r * 0.5); ctx.stroke();
   } else if (st.hat === 'kasa') {
@@ -266,6 +309,10 @@ function drawKatana(ctx, hx, hy, ang, len, s, st, glow, blood = 0) {
   const bx = hx + c * 9 * s, by = hy + sn * 9 * s, tx = hx + c * len, ty = hy + sn * len;
   const cv = 3.2 * s;
   const mx = (bx + tx) / 2 - px * cv, my = (by + ty) / 2 - py * cv;
+  if (!glow) { // ink edge so the steel reads against bright skies
+    ctx.strokeStyle = 'rgba(11,13,19,0.55)'; ctx.lineWidth = 3.2 * s + 2.2;
+    ctx.beginPath(); ctx.moveTo(bx, by); ctx.quadraticCurveTo(mx, my, tx, ty); ctx.stroke();
+  }
   if (glow) { ctx.shadowColor = glow; ctx.shadowBlur = 16; }
   ctx.strokeStyle = glow || st.blade || '#dfe9ec'; ctx.lineWidth = 3.2 * s;
   ctx.beginPath(); ctx.moveTo(bx, by); ctx.quadraticCurveTo(mx, my, tx, ty); ctx.stroke();
@@ -277,6 +324,20 @@ function drawKatana(ctx, hx, hy, ang, len, s, st, glow, blood = 0) {
     ctx.strokeStyle = `rgba(150,8,20,${Math.min(0.9, blood)})`; ctx.lineWidth = 2.6 * s;
     ctx.beginPath(); ctx.moveTo(sx, sy); ctx.quadraticCurveTo(mx, my, tx, ty); ctx.stroke();
   }
+}
+
+// yari: a long shaft with a short leaf blade and a red tassel. hand at (hx,hy); len = hand->tip
+function drawSpear(ctx, hx, hy, ang, len, st, glow) {
+  const c = Math.cos(ang), sn = Math.sin(ang), px = -sn, py = c;
+  const ax = hx - c * 34, ay = hy - sn * 34, nx = hx + c * (len - 20), ny = hy + sn * (len - 20), tx = hx + c * len, ty = hy + sn * len;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = INK; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(nx, ny); ctx.stroke();
+  ctx.strokeStyle = st.hilt || '#6b4a2a'; ctx.lineWidth = 2.8; ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(nx, ny); ctx.stroke();
+  ctx.strokeStyle = '#c3262f'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(nx - c * 5, ny - sn * 5); ctx.lineTo(nx - c * 1, ny - sn * 1); ctx.stroke();
+  if (glow) { ctx.shadowColor = glow; ctx.shadowBlur = 14; }
+  ctx.fillStyle = glow || st.blade || '#e4ecef'; ctx.strokeStyle = INK; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(nx + px * 4, ny + py * 4); ctx.lineTo(nx - c * 3, ny - sn * 3); ctx.lineTo(nx - px * 4, ny - py * 4); ctx.closePath();
+  ctx.fill(); ctx.shadowBlur = 0; ctx.stroke();
 }
 
 // visible damage on a blade: dark zigzag cracks, and a jagged tip once it has snapped

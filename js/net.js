@@ -317,7 +317,7 @@ const Net = {
       G.hitstop = Math.max(G.hitstop, 0.05);
       FX.text(cx, cy - 30, 'PARRY!', '#fff6a0', 22);
       p.gainRiposte(perfect);
-      if (perfect) { p.addLust(0.5); FX.text(cx, cy - 52, 'CRACK!', '#ffe9a8', 16); }
+      if (perfect) { p.addLust(1); FX.text(cx, cy - 52, 'CRACK!', '#ffe9a8', 16); }
     } else if (mine > 3) {
       Sound.clang(clamp(mine / 30, 0.25, 0.8)); FX.spark(cx, cy, 8, null, TAU, 380);
     }
